@@ -1,11 +1,21 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "rootDir": ".",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "outDir": "dist",
-    "noEmit": false
+    "noEmit": false,
+    "types": ["node"],
+    "paths": {
+      "@ai-blue-simu-sys/shared": ["../../packages/shared/src/index.ts"],
+      "@ai-blue-simu-sys/ontology": ["../../packages/ontology/src/index.ts"],
+      "@ai-blue-simu-sys/scenario": ["../../packages/scenario/src/index.ts"],
+      "@ai-blue-simu-sys/situation": ["../../packages/situation/src/index.ts"],
+      "@ai-blue-simu-sys/ai-core": ["../../packages/ai-core/src/index.ts"],
+      "@ai-blue-simu-sys/governance": ["../../packages/governance/src/index.ts"]
+    }
   },
   "include": ["src"],
   "references": [

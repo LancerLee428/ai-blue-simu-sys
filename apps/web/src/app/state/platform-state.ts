@@ -1,9 +1,7 @@
-import type { PlatformSkeleton } from './app/types/platform';
+import type { PlatformSkeleton } from '../types/platform';
 import type {
-  DeploymentConfirmCommand,
   DeploymentDraftItem,
   DeploymentDraftResponse,
-  DeploymentIntentCommand,
 } from '@ai-blue-simu-sys/ai-core';
 
 const API_BASE_URL = 'http://localhost:3000';
@@ -94,9 +92,14 @@ const FALLBACK_PLATFORM: PlatformSkeleton = {
 };
 
 let platformState: PlatformSkeleton = FALLBACK_PLATFORM;
+let apiAvailable = false;
 
 export function getPlatformState() {
   return platformState;
+}
+
+export function isApiAvailable() {
+  return apiAvailable;
 }
 
 export function setPlatformState(nextState: PlatformSkeleton) {
@@ -112,14 +115,16 @@ export async function loadPlatformState() {
     }
 
     const nextState = (await response.json()) as PlatformSkeleton;
+    apiAvailable = true;
     setPlatformState(nextState);
     return nextState;
   } catch {
+    apiAvailable = false;
     return platformState;
   }
 }
 
-export async function requestDeploymentDraft(command: DeploymentIntentCommand) {
+export async function requestDeploymentDraft(command: PlatformSkeleton['ai']['draft']['command']) {
   try {
     const response = await fetch(`${API_BASE_URL}/api/ai/deployment-draft`, {
       method: 'POST',
@@ -133,14 +138,16 @@ export async function requestDeploymentDraft(command: DeploymentIntentCommand) {
       throw new Error('部署草案生成失败');
     }
 
+    apiAvailable = true;
     return (await response.json()) as DeploymentDraftResponse;
   } catch {
+    apiAvailable = false;
     return FALLBACK_PLATFORM.ai.draft;
   }
 }
 
 export async function confirmDeploymentDraftRequest(items: DeploymentDraftItem[]) {
-  const command: DeploymentConfirmCommand = {
+  const command = {
     scenarioId: platformState.scenarioWorkspace.scenario.id,
     items,
   };
@@ -174,8 +181,11 @@ export async function confirmDeploymentDraftRequest(items: DeploymentDraftItem[]
       })),
     };
 
+    apiAvailable = true;
     return platformState;
   } catch {
+    apiAvailable = false;
+
     const fallbackWorkspace = {
       ...platformState.scenarioWorkspace,
       scenario: {

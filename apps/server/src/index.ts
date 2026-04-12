@@ -1,4 +1,6 @@
-import type { ModuleDescriptor, APP_NAME, APP_VERSION } from '@ai-blue-simu-sys/shared';
+import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ModuleDescriptor } from '@ai-blue-simu-sys/shared';
 import type {
   DeploymentConfirmCommand,
   DeploymentDraftResponse,
@@ -32,8 +34,9 @@ type PlatformSkeleton = {
   };
 };
 
-const appName: string = 'AI Blue Simulation System';
-const appVersion: string = '0.1.0';
+const appName = 'AI Blue Simulation System';
+const appVersion = '0.1.0';
+const port = 3000;
 
 export function createPlatformSkeleton(): PlatformSkeleton {
   const scenarioWorkspace = getScenarioWorkspaceState();
@@ -65,31 +68,63 @@ export function createPlatformSkeleton(): PlatformSkeleton {
   };
 }
 
-async function readJsonBody<T>(request: Request): Promise<T> {
-  return (await request.json()) as T;
+function writeJson(response: ServerResponse, statusCode: number, payload: unknown) {
+  response.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  });
+  response.end(JSON.stringify(payload));
 }
 
-export async function handleRequest(request: Request): Promise<Response> {
-  const url = new URL(request.url);
+async function readJsonBody<T>(request: IncomingMessage): Promise<T> {
+  const chunks: Uint8Array[] = [];
 
-  if (request.method === 'GET' && url.pathname === '/api/platform-skeleton') {
-    return Response.json(createPlatformSkeleton());
+  for await (const chunk of request) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/ai/deployment-draft') {
+  const raw = Buffer.concat(chunks).toString('utf-8');
+  return JSON.parse(raw) as T;
+}
+
+async function handleNodeRequest(request: IncomingMessage, response: ServerResponse) {
+  const method = request.method ?? 'GET';
+  const url = new URL(request.url ?? '/', `http://localhost:${port}`);
+
+  if (method === 'OPTIONS') {
+    response.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    });
+    response.end();
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/platform-skeleton') {
+    writeJson(response, 200, createPlatformSkeleton());
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/ai/deployment-draft') {
     const command = await readJsonBody<DeploymentIntentCommand>(request);
-    const response: DeploymentDraftResponse = createDeploymentDraftResponse(command);
-    return Response.json(response);
+    writeJson(response, 200, createDeploymentDraftResponse(command));
+    return;
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/ai/deployment-confirm') {
+  if (method === 'POST' && url.pathname === '/api/ai/deployment-confirm') {
     const command = await readJsonBody<DeploymentConfirmCommand>(request);
-    return Response.json(confirmDeploymentDraft(command));
+    writeJson(response, 200, confirmDeploymentDraft(command));
+    return;
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/scenario/confirm') {
+  if (method === 'POST' && url.pathname === '/api/scenario/confirm') {
     const command = await readJsonBody<DeploymentConfirmCommand>(request);
-    return Response.json(
+    writeJson(
+      response,
+      200,
       confirmScenarioDeployment(
         command.items.map((item) => ({
           sourceEntityId: item.sourceEntityId,
@@ -100,22 +135,20 @@ export async function handleRequest(request: Request): Promise<Response> {
         })),
       ),
     );
+    return;
   }
 
-  return new Response('Not Found', { status: 404 });
+  writeJson(response, 404, { message: 'Not Found' });
 }
 
-const port = 3000;
+const server = createServer((request, response) => {
+  void handleNodeRequest(request, response).catch((error) => {
+    writeJson(response, 500, {
+      message: error instanceof Error ? error.message : 'Internal Server Error',
+    });
+  });
+});
 
-console.log(
-  JSON.stringify(
-    {
-      server: {
-        port,
-      },
-      platform: createPlatformSkeleton(),
-    },
-    null,
-    2,
-  ),
-);
+server.listen(port, () => {
+  console.log(`AI Blue Simulation System server listening on http://localhost:${port}`);
+});

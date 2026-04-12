@@ -28,4 +28,9 @@ export type DeploymentDraftResponse = {
   draft: DeploymentDraft;
 };
 
+export type DeploymentConfirmCommand = {
+  scenarioId: string;
+  items: DeploymentDraftItem[];
+};
+
 export const AI_ASSISTANT_MODULE = 'ai-assistant';

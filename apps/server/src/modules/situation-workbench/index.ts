@@ -1,4 +1,5 @@
-import { demoDeploymentPoints } from '@ai-blue-simu-sys/situation';
+import { createWorkbenchDeploymentPoints } from '@ai-blue-simu-sys/situation';
+import { getScenarioWorkspaceState } from '../scenario-workspace';
 
 export const situationWorkbenchModule = {
   key: 'situation-workbench',
@@ -7,5 +8,5 @@ export const situationWorkbenchModule = {
 };
 
 export function getSituationWorkbenchState() {
-  return demoDeploymentPoints;
+  return createWorkbenchDeploymentPoints(getScenarioWorkspaceState().projections);
 }

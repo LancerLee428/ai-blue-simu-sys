@@ -1,18 +1,26 @@
-import type { DeploymentDraftResponse, DeploymentIntentCommand } from '@ai-blue-simu-sys/ai-core';
+import type {
+  DeploymentConfirmCommand,
+  DeploymentDraftResponse,
+  DeploymentIntentCommand,
+} from '@ai-blue-simu-sys/ai-core';
 import { APP_NAME, APP_VERSION } from '@ai-blue-simu-sys/shared';
 import { ontologyModule } from './modules/ontology';
-import { getScenarioWorkspaceState, scenarioWorkspaceModule } from './modules/scenario-workspace';
+import {
+  confirmScenarioDeployment,
+  getScenarioWorkspaceState,
+  scenarioWorkspaceModule,
+} from './modules/scenario-workspace';
 import { getSituationWorkbenchState, situationWorkbenchModule } from './modules/situation-workbench';
 import {
   aiAssistantModule,
+  confirmDeploymentDraft,
   createDeploymentDraftResponse,
 } from './modules/ai-assistant';
 import { governanceModule } from './modules/governance';
 
-const scenarioWorkspace = getScenarioWorkspaceState();
-const situationWorkbench = getSituationWorkbenchState();
-
 function createPlatformSkeleton() {
+  const scenarioWorkspace = getScenarioWorkspaceState();
+  const situationWorkbench = getSituationWorkbenchState();
   const command: DeploymentIntentCommand = {
     type: 'deployment.intent',
     scenarioId: scenarioWorkspace.scenario.id,
@@ -55,6 +63,26 @@ async function handleRequest(request: Request): Promise<Response> {
     const command = await readJsonBody<DeploymentIntentCommand>(request);
     const response: DeploymentDraftResponse = createDeploymentDraftResponse(command);
     return Response.json(response);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/ai/deployment-confirm') {
+    const command = await readJsonBody<DeploymentConfirmCommand>(request);
+    return Response.json(confirmDeploymentDraft(command));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/scenario/confirm') {
+    const command = await readJsonBody<DeploymentConfirmCommand>(request);
+    return Response.json(
+      confirmScenarioDeployment(
+        command.items.map((item) => ({
+          sourceEntityId: item.sourceEntityId,
+          name: item.name,
+          category: item.category,
+          location: item.suggestedLocation,
+          status: 'deployed',
+        })),
+      ),
+    );
   }
 
   return new Response('Not Found', { status: 404 });

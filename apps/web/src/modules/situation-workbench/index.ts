@@ -5,8 +5,8 @@ export function renderSituationWorkbenchModule() {
     <article class="module-card">
       <p class="module-kicker">Situation Workbench</p>
       <h2>态势工作台</h2>
-      <p class="module-summary">当前已形成 ${demoDeploymentPoints.length} 个部署点位草案</p>
-      <ul>
+      <p id="situation-workbench-summary" class="module-summary">当前已形成 ${demoDeploymentPoints.length} 个部署点位草案</p>
+      <ul id="situation-workbench-points">
         ${demoDeploymentPoints
           .map(
             (point) => `

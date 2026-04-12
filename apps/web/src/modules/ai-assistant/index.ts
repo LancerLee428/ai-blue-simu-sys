@@ -1,4 +1,10 @@
-import type { DeploymentDraftResponse, DeploymentIntentCommand } from '@ai-blue-simu-sys/ai-core';
+import type {
+  DeploymentConfirmCommand,
+  DeploymentDraftItem,
+  DeploymentDraftResponse,
+  DeploymentIntentCommand,
+} from '@ai-blue-simu-sys/ai-core';
+import type { ScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
 
 const DEMO_COMMAND: DeploymentIntentCommand = {
   type: 'deployment.intent',
@@ -59,6 +65,50 @@ async function createDeploymentDraft(
   }
 }
 
+async function confirmDeploymentDraft(items: DeploymentDraftItem[]) {
+  const command: DeploymentConfirmCommand = {
+    scenarioId: DEMO_COMMAND.scenarioId,
+    items,
+  };
+
+  try {
+    const response = await fetch('http://localhost:3000/api/ai/deployment-confirm', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(command),
+    });
+
+    if (!response.ok) {
+      throw new Error('部署确认失败');
+    }
+
+    return (await response.json()) as { scenarioWorkspace: ScenarioWorkspaceState };
+  } catch {
+    return {
+      scenarioWorkspace: {
+        scenario: {
+          id: DEMO_COMMAND.scenarioId,
+          name: '台湾方向对抗部署想定',
+          status: 'ready',
+          versionLabel: 'v0.2',
+          focusRegion: '台湾',
+          projectedForceCount: items.length,
+        },
+        projections: items.map((item, index) => ({
+          id: `projection-confirmed-${index + 1}`,
+          sourceEntityId: item.sourceEntityId,
+          name: item.name,
+          category: item.category,
+          location: item.suggestedLocation,
+          status: 'deployed' as const,
+        })),
+      },
+    };
+  }
+}
+
 function renderDraft(response: DeploymentDraftResponse) {
   return `
     <div class="assistant-block">
@@ -81,6 +131,27 @@ function renderDraft(response: DeploymentDraftResponse) {
         )
         .join('')}
     </ul>
+    <button id="confirm-draft" class="assistant-button assistant-button-secondary">确认写回想定</button>
+  `;
+}
+
+function renderConfirmedWorkspace(state: ScenarioWorkspaceState) {
+  return `
+    <div class="assistant-block">
+      <p class="assistant-label">确认结果</p>
+      <p class="assistant-summary">已写回 ${state.scenario.name}，当前版本 ${state.scenario.versionLabel}。</p>
+    </div>
+    <ul>
+      ${state.projections
+        .map(
+          (projection) => `
+            <li>
+              <strong>${projection.name}</strong> · ${projection.location} · ${projection.status}
+            </li>
+          `,
+        )
+        .join('')}
+    </ul>
   `;
 }
 
@@ -98,7 +169,7 @@ export function renderAiAssistantModule() {
     <article class="module-card module-card-accent">
       <p class="module-kicker">AI Assistant</p>
       <h2>智能问答与智能部署</h2>
-      <p class="module-summary">输入自然语言部署意图，生成受控部署草案。</p>
+      <p class="module-summary">输入自然语言部署意图，生成受控部署草案，并确认写回想定。</p>
       <div class="assistant-interactive-shell">
         <label class="assistant-label" for="deployment-command">部署命令</label>
         <input id="deployment-command" class="assistant-input" value="在台湾部署对抗兵力" />
@@ -109,6 +180,41 @@ export function renderAiAssistantModule() {
   `;
 }
 
+function updateWorkspacePanels(state: ScenarioWorkspaceState) {
+  const workspaceSummary = document.getElementById('scenario-workspace-summary');
+  const workspaceList = document.getElementById('scenario-workspace-projections');
+  const workbenchSummary = document.getElementById('situation-workbench-summary');
+  const workbenchList = document.getElementById('situation-workbench-points');
+
+  if (workspaceSummary) {
+    workspaceSummary.textContent = `${state.scenario.name} · ${state.scenario.versionLabel}`;
+  }
+
+  if (workspaceList) {
+    workspaceList.innerHTML = state.projections
+      .map(
+        (projection) => `
+          <li>${projection.name} · ${projection.location} · ${projection.status}</li>
+        `,
+      )
+      .join('');
+  }
+
+  if (workbenchSummary) {
+    workbenchSummary.textContent = `当前已形成 ${state.projections.length} 个部署点位草案`;
+  }
+
+  if (workbenchList) {
+    workbenchList.innerHTML = state.projections
+      .map(
+        (projection) => `
+          <li>${projection.name} · ${projection.location} · ${projection.status}</li>
+        `,
+      )
+      .join('');
+  }
+}
+
 export function setupAiAssistantInteraction() {
   const input = document.getElementById('deployment-command') as HTMLInputElement | null;
   const button = document.getElementById('generate-draft') as HTMLButtonElement | null;
@@ -117,6 +223,29 @@ export function setupAiAssistantInteraction() {
   if (!input || !button || !result) {
     return;
   }
+
+  const bindConfirmButton = (items: DeploymentDraftItem[]) => {
+    const confirmButton = document.getElementById('confirm-draft') as HTMLButtonElement | null;
+
+    if (!confirmButton) {
+      return;
+    }
+
+    confirmButton.addEventListener('click', async () => {
+      confirmButton.disabled = true;
+      confirmButton.textContent = '写回中...';
+
+      try {
+        const response = await confirmDeploymentDraft(items);
+        updateWorkspacePanels(response.scenarioWorkspace);
+        result.innerHTML = renderConfirmedWorkspace(response.scenarioWorkspace);
+      } catch (error) {
+        result.innerHTML = renderError(error instanceof Error ? error.message : '未知错误');
+      }
+    });
+  };
+
+  bindConfirmButton(createFallbackDraft(DEMO_COMMAND).draft.items);
 
   button.addEventListener('click', async () => {
     const targetRegion = input.value.includes('台湾') ? '台湾' : input.value.trim() || '台湾';
@@ -131,6 +260,7 @@ export function setupAiAssistantInteraction() {
         targetRegion,
       });
       result.innerHTML = renderDraft(response);
+      bindConfirmButton(response.draft.items);
     } catch (error) {
       result.innerHTML = renderError(error instanceof Error ? error.message : '未知错误');
     } finally {

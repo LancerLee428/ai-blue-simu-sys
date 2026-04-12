@@ -195,6 +195,10 @@ h1 {
   cursor: pointer;
 }
 
+.assistant-button-secondary {
+  background: linear-gradient(135deg, #7ecbff, #9be9dd);
+}
+
 .assistant-button:disabled {
   opacity: 0.7;
   cursor: wait;

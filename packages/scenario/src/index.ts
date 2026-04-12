@@ -21,6 +21,14 @@ export type ScenarioWorkspaceState = {
   projections: ScenarioProjection[];
 };
 
+export type ScenarioProjectionInput = {
+  sourceEntityId: string;
+  name: string;
+  category: 'force-unit' | 'platform';
+  location: string;
+  status: 'planned' | 'deployed';
+};
+
 export const demoScenarioWorkspaceState: ScenarioWorkspaceState = {
   scenario: {
     id: 'scenario-tw-001',

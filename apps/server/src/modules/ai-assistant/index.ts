@@ -1,5 +1,12 @@
-import type { DeploymentDraft, DeploymentDraftResponse, DeploymentIntentCommand } from '@ai-blue-simu-sys/ai-core';
+import type {
+  DeploymentConfirmCommand,
+  DeploymentDraft,
+  DeploymentDraftItem,
+  DeploymentDraftResponse,
+  DeploymentIntentCommand,
+} from '@ai-blue-simu-sys/ai-core';
 import { demoScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
+import { confirmScenarioDeployment } from '../scenario-workspace';
 
 export const aiAssistantModule = {
   key: 'ai-assistant',
@@ -44,5 +51,21 @@ export function createDeploymentDraftResponse(
   return {
     command,
     draft: createDeploymentDraft(command),
+  };
+}
+
+export function confirmDeploymentDraft(command: DeploymentConfirmCommand) {
+  const workspace = confirmScenarioDeployment(
+    command.items.map((item: DeploymentDraftItem) => ({
+      sourceEntityId: item.sourceEntityId,
+      name: item.name,
+      category: item.category,
+      location: item.suggestedLocation,
+      status: 'deployed',
+    })),
+  );
+
+  return {
+    scenarioWorkspace: workspace,
   };
 }

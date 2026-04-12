@@ -1,11 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "../..",
+    "rootDir": ".",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "outDir": "dist",
     "noEmit": false
   },
-  "include": ["src", "../../packages/shared/src", "../../packages/ai-core/src"]
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/ai-core" },
+    { "path": "../../packages/scenario" },
+    { "path": "../../packages/situation" }
+  ]
 }

@@ -1,9 +1,11 @@
+import type { ModuleDescriptor, APP_NAME, APP_VERSION } from '@ai-blue-simu-sys/shared';
 import type {
   DeploymentConfirmCommand,
   DeploymentDraftResponse,
   DeploymentIntentCommand,
 } from '@ai-blue-simu-sys/ai-core';
-import { APP_NAME, APP_VERSION } from '@ai-blue-simu-sys/shared';
+import type { ScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
+import type { WorkbenchDeploymentPoint } from '@ai-blue-simu-sys/situation';
 import { ontologyModule } from './modules/ontology';
 import {
   confirmScenarioDeployment,
@@ -18,7 +20,22 @@ import {
 } from './modules/ai-assistant';
 import { governanceModule } from './modules/governance';
 
-function createPlatformSkeleton() {
+type PlatformSkeleton = {
+  app: string;
+  version: string;
+  modules: ModuleDescriptor[];
+  scenarioWorkspace: ScenarioWorkspaceState;
+  situationWorkbench: WorkbenchDeploymentPoint[];
+  ai: {
+    sampleCommand: string;
+    draft: DeploymentDraftResponse;
+  };
+};
+
+const appName: string = 'AI Blue Simulation System';
+const appVersion: string = '0.1.0';
+
+export function createPlatformSkeleton(): PlatformSkeleton {
   const scenarioWorkspace = getScenarioWorkspaceState();
   const situationWorkbench = getSituationWorkbenchState();
   const command: DeploymentIntentCommand = {
@@ -30,8 +47,8 @@ function createPlatformSkeleton() {
   };
 
   return {
-    app: APP_NAME,
-    version: APP_VERSION,
+    app: appName,
+    version: appVersion,
     modules: [
       ontologyModule,
       scenarioWorkspaceModule,
@@ -52,7 +69,7 @@ async function readJsonBody<T>(request: Request): Promise<T> {
   return (await request.json()) as T;
 }
 
-async function handleRequest(request: Request): Promise<Response> {
+export async function handleRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
 
   if (request.method === 'GET' && url.pathname === '/api/platform-skeleton') {
@@ -90,15 +107,12 @@ async function handleRequest(request: Request): Promise<Response> {
 
 const port = 3000;
 
-const serverApi = {
-  port,
-  fetch: handleRequest,
-};
-
 console.log(
   JSON.stringify(
     {
-      server: serverApi,
+      server: {
+        port,
+      },
       platform: createPlatformSkeleton(),
     },
     null,

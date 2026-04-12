@@ -1,13 +1,13 @@
-import { demoScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
+import type { ScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
 
-export function renderScenarioWorkspaceModule() {
+export function renderScenarioWorkspaceModule(state: ScenarioWorkspaceState) {
   return `
     <article class="module-card">
       <p class="module-kicker">Scenario Workspace</p>
       <h2>想定工作空间</h2>
-      <p id="scenario-workspace-summary" class="module-summary">${demoScenarioWorkspaceState.scenario.name} · ${demoScenarioWorkspaceState.scenario.versionLabel}</p>
+      <p id="scenario-workspace-summary" class="module-summary">${state.scenario.name} · ${state.scenario.versionLabel}</p>
       <ul id="scenario-workspace-projections">
-        ${demoScenarioWorkspaceState.projections
+        ${state.projections
           .map(
             (projection) => `
               <li>${projection.name} · ${projection.location} · ${projection.status}</li>

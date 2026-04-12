@@ -1,6 +1,6 @@
-import type { AppRoute } from '../router/routes';
+import type { ModuleDescriptor } from '@ai-blue-simu-sys/shared';
 
-export function renderNavigation(routes: AppRoute[]) {
+export function renderNavigation(routes: ModuleDescriptor[]) {
   return `
     <nav class="side-navigation">
       <p class="section-title">Platform Bones</p>
@@ -9,7 +9,7 @@ export function renderNavigation(routes: AppRoute[]) {
           .map(
             (route) => `
               <li>
-                <span class="nav-label">${route.label}</span>
+                <span class="nav-label">${route.title}</span>
                 <span class="nav-description">${route.description}</span>
               </li>
             `,

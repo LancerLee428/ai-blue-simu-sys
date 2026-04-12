@@ -169,6 +169,19 @@ h1 {
   margin-bottom: 14px;
 }
 
+.assistant-history-block {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(130, 162, 255, 0.12);
+}
+
+.assistant-reject-block {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(61, 18, 28, 0.5);
+  border: 1px solid rgba(255, 128, 148, 0.28);
+}
+
 .assistant-label {
   margin: 0 0 6px;
   font-size: 12px;
@@ -207,6 +220,24 @@ h1 {
   gap: 10px;
 }
 
+.assistant-history-list,
+.workspace-history-shell ul {
+  display: grid;
+  gap: 10px;
+  padding-left: 18px;
+}
+
+.assistant-textarea {
+  width: 100%;
+  min-height: 92px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(130, 162, 255, 0.22);
+  background: rgba(7, 17, 31, 0.88);
+  color: #e5efff;
+  resize: vertical;
+}
+
 .assistant-input {
   width: 100%;
   padding: 12px 14px;
@@ -230,6 +261,10 @@ h1 {
   background: linear-gradient(135deg, #7ecbff, #9be9dd);
 }
 
+.assistant-button-danger {
+  background: linear-gradient(135deg, #ff7b91, #ffb36b);
+}
+
 .assistant-button:disabled {
   opacity: 0.7;
   cursor: wait;
@@ -237,6 +272,12 @@ h1 {
 
 .module-card li span {
   color: #9fb2d6;
+}
+
+.workspace-history-shell {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(130, 162, 255, 0.12);
 }
 
 @media (max-width: 960px) {

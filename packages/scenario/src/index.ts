@@ -16,17 +16,27 @@ export type ScenarioProjection = {
   status: 'planned' | 'deployed';
 };
 
-export type ScenarioWorkspaceState = {
-  scenario: ScenarioSummary;
-  projections: ScenarioProjection[];
-};
-
 export type ScenarioProjectionInput = {
   sourceEntityId: string;
   name: string;
   category: 'force-unit' | 'platform';
   location: string;
   status: 'planned' | 'deployed';
+};
+
+export type ScenarioVersionHistoryEntry = {
+  versionLabel: string;
+  action: 'draft_generated' | 'draft_regenerated' | 'draft_rejected' | 'confirmed' | 'confirm_undone';
+  timestamp: string;
+  projectionCount: number;
+  note: string;
+};
+
+export type ScenarioWorkspaceState = {
+  scenario: ScenarioSummary;
+  projections: ScenarioProjection[];
+  versionHistory: ScenarioVersionHistoryEntry[];
+  lastRejectedDraftReason?: string;
 };
 
 export const demoScenarioWorkspaceState: ScenarioWorkspaceState = {
@@ -54,6 +64,15 @@ export const demoScenarioWorkspaceState: ScenarioWorkspaceState = {
       category: 'platform',
       location: '台湾东部海域',
       status: 'planned',
+    },
+  ],
+  versionHistory: [
+    {
+      versionLabel: 'v0.1',
+      action: 'draft_generated',
+      timestamp: '2026-04-12T00:00:00.000Z',
+      projectionCount: 2,
+      note: '初始化首版部署草案。',
     },
   ],
 };

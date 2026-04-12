@@ -5,6 +5,7 @@ import type {
   DeploymentConfirmCommand,
   DeploymentDraftResponse,
   DeploymentIntentCommand,
+  DeploymentRejectCommand,
 } from '@ai-blue-simu-sys/ai-core';
 import type { ScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
 import type { WorkbenchDeploymentPoint } from '@ai-blue-simu-sys/situation';
@@ -13,12 +14,14 @@ import {
   confirmScenarioDeployment,
   getScenarioWorkspaceState,
   scenarioWorkspaceModule,
+  undoScenarioConfirmation,
 } from './modules/scenario-workspace';
 import { getSituationWorkbenchState, situationWorkbenchModule } from './modules/situation-workbench';
 import {
   aiAssistantModule,
   confirmDeploymentDraft,
   createDeploymentDraftResponse,
+  rejectDeploymentDraft,
 } from './modules/ai-assistant';
 import { governanceModule } from './modules/governance';
 
@@ -131,6 +134,12 @@ async function handleNodeRequest(request: IncomingMessage, response: ServerRespo
     return;
   }
 
+  if (method === 'POST' && url.pathname === '/api/ai/deployment-reject') {
+    const command = await readJsonBody<DeploymentRejectCommand>(request);
+    writeJson(response, 200, rejectDeploymentDraft(command));
+    return;
+  }
+
   if (method === 'POST' && url.pathname === '/api/scenario/confirm') {
     const command = await readJsonBody<DeploymentConfirmCommand>(request);
     writeJson(
@@ -146,6 +155,14 @@ async function handleNodeRequest(request: IncomingMessage, response: ServerRespo
         })),
       ),
     );
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/scenario/undo-confirm') {
+    writeJson(response, 200, {
+      scenarioWorkspace: undoScenarioConfirmation(),
+      situationWorkbench: getSituationWorkbenchState(),
+    });
     return;
   }
 

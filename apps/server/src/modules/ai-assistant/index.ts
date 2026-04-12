@@ -4,9 +4,14 @@ import type {
   DeploymentDraftItem,
   DeploymentDraftResponse,
   DeploymentIntentCommand,
+  DeploymentRejectCommand,
 } from '@ai-blue-simu-sys/ai-core';
 import { demoScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
-import { confirmScenarioDeployment } from '../scenario-workspace';
+import {
+  confirmScenarioDeployment,
+  recordScenarioDraftRegenerated,
+  rejectScenarioDraft,
+} from '../scenario-workspace';
 
 export const aiAssistantModule = {
   key: 'ai-assistant',
@@ -26,6 +31,10 @@ export function createDeploymentDraft(command: DeploymentIntentCommand): Deploym
       ? demoScenarioWorkspaceState.scenario.name
       : '未知想定';
   const regenerated = Boolean(command.regenerateFromDraftId);
+
+  if (regenerated) {
+    recordScenarioDraftRegenerated();
+  }
 
   return {
     type: 'deployment.draft',
@@ -81,5 +90,12 @@ export function confirmDeploymentDraft(command: DeploymentConfirmCommand) {
 
   return {
     scenarioWorkspace: workspace,
+  };
+}
+
+export function rejectDeploymentDraft(command: DeploymentRejectCommand) {
+  return {
+    scenarioWorkspace: rejectScenarioDraft(command.reason),
+    rejectedDraftId: command.draftId,
   };
 }

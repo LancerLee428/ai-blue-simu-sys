@@ -15,6 +15,18 @@ export function renderScenarioWorkspaceModule(state: ScenarioWorkspaceState) {
           )
           .join('')}
       </ul>
+      <div class="workspace-history-shell">
+        <p class="assistant-label">版本历史</p>
+        <ul id="scenario-workspace-history">
+          ${state.versionHistory
+            .map(
+              (entry) => `
+                <li>${entry.versionLabel} · ${entry.action} · ${entry.note}</li>
+              `,
+            )
+            .join('')}
+        </ul>
+      </div>
     </article>
   `;
 }

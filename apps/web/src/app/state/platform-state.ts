@@ -37,6 +37,15 @@ const FALLBACK_PLATFORM: PlatformSkeleton = {
         status: 'planned',
       },
     ],
+    versionHistory: [
+      {
+        versionLabel: 'v0.1',
+        action: 'draft_generated',
+        timestamp: '2026-04-12T00:00:00.000Z',
+        projectionCount: 2,
+        note: '初始化首版部署草案。',
+      },
+    ],
   },
   situationWorkbench: [
     {
@@ -66,6 +75,7 @@ const FALLBACK_PLATFORM: PlatformSkeleton = {
       },
       draft: {
         type: 'deployment.draft',
+        id: 'draft-scenario-tw-001-台湾',
         scenarioId: 'scenario-tw-001',
         summary: '已为 台湾 生成本地演示部署草案',
         objective: '建立对抗前沿部署与侦察支撑节点',
@@ -146,6 +156,58 @@ export async function requestDeploymentDraft(command: PlatformSkeleton['ai']['dr
   }
 }
 
+export async function rejectDeploymentDraftRequest(draftId: string, reason: string) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/ai/deployment-reject`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        scenarioId: platformState.scenarioWorkspace.scenario.id,
+        draftId,
+        reason,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('草案拒绝失败');
+    }
+
+    const result = (await response.json()) as {
+      scenarioWorkspace: PlatformSkeleton['scenarioWorkspace'];
+    };
+
+    platformState = {
+      ...platformState,
+      scenarioWorkspace: result.scenarioWorkspace,
+    };
+
+    apiAvailable = true;
+    return platformState;
+  } catch {
+    apiAvailable = false;
+    platformState = {
+      ...platformState,
+      scenarioWorkspace: {
+        ...platformState.scenarioWorkspace,
+        lastRejectedDraftReason: reason,
+        versionHistory: [
+          ...platformState.scenarioWorkspace.versionHistory,
+          {
+            versionLabel: platformState.scenarioWorkspace.scenario.versionLabel,
+            action: 'draft_rejected',
+            timestamp: new Date().toISOString(),
+            projectionCount: platformState.scenarioWorkspace.projections.length,
+            note: `拒绝草案：${reason}`,
+          },
+        ],
+      },
+    };
+    return platformState;
+  }
+}
+
 export async function confirmDeploymentDraftRequest(items: DeploymentDraftItem[]) {
   const command = {
     scenarioId: platformState.scenarioWorkspace.scenario.id,
@@ -202,6 +264,17 @@ export async function confirmDeploymentDraftRequest(items: DeploymentDraftItem[]
         location: item.suggestedLocation,
         status: 'deployed' as const,
       })),
+      versionHistory: [
+        ...platformState.scenarioWorkspace.versionHistory,
+        {
+          versionLabel: 'v0.2',
+          action: 'confirmed' as const,
+          timestamp: new Date().toISOString(),
+          projectionCount: items.length,
+          note: '确认写回部署草案。',
+        },
+      ],
+      lastRejectedDraftReason: undefined,
     };
 
     platformState = {
@@ -216,6 +289,38 @@ export async function confirmDeploymentDraftRequest(items: DeploymentDraftItem[]
       })),
     };
 
+    return platformState;
+  }
+}
+
+export async function undoDeploymentConfirmationRequest() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/scenario/undo-confirm`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('撤销确认失败');
+    }
+
+    const result = (await response.json()) as {
+      scenarioWorkspace: PlatformSkeleton['scenarioWorkspace'];
+      situationWorkbench: PlatformSkeleton['situationWorkbench'];
+    };
+
+    platformState = {
+      ...platformState,
+      scenarioWorkspace: result.scenarioWorkspace,
+      situationWorkbench: result.situationWorkbench,
+    };
+
+    apiAvailable = true;
+    return platformState;
+  } catch {
+    apiAvailable = false;
     return platformState;
   }
 }

@@ -35,4 +35,10 @@ export type DeploymentConfirmCommand = {
   items: DeploymentDraftItem[];
 };
 
+export type DeploymentRejectCommand = {
+  scenarioId: string;
+  draftId: string;
+  reason: string;
+};
+
 export const AI_ASSISTANT_MODULE = 'ai-assistant';

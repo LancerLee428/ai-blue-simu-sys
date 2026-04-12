@@ -32,7 +32,10 @@ function renderDraft(response: DeploymentDraftResponse) {
         )
         .join('')}
     </ul>
-    <button id="confirm-draft" class="assistant-button assistant-button-secondary">确认写回想定</button>
+    <div class="assistant-action-row">
+      <button id="regenerate-draft" class="assistant-button assistant-button-secondary">重生成草案</button>
+      <button id="confirm-draft" class="assistant-button assistant-button-secondary">确认写回想定</button>
+    </div>
   `;
 }
 
@@ -125,29 +128,58 @@ export function setupAiAssistantInteraction() {
     return;
   }
 
-  const bindConfirmButton = (items: DeploymentDraftItem[]) => {
+  const bindDraftActions = (response: DeploymentDraftResponse) => {
     const confirmButton = document.getElementById('confirm-draft') as HTMLButtonElement | null;
+    const regenerateButton = document.getElementById('regenerate-draft') as HTMLButtonElement | null;
 
-    if (!confirmButton) {
-      return;
+    if (regenerateButton) {
+      regenerateButton.addEventListener('click', async () => {
+        regenerateButton.disabled = true;
+        regenerateButton.textContent = '重生成中...';
+
+        try {
+          const platform = getPlatformState();
+          const regenerated = await requestDeploymentDraft({
+            ...response.command,
+            scenarioId: platform.scenarioWorkspace.scenario.id,
+            regenerateFromDraftId: response.draft.id,
+          });
+
+          const nextPlatform = {
+            ...platform,
+            ai: {
+              ...platform.ai,
+              draft: regenerated,
+            },
+          };
+
+          setPlatformState(nextPlatform);
+          result.innerHTML = renderDraft(regenerated);
+          bindDraftActions(regenerated);
+        } catch (error) {
+          result.innerHTML = renderError(error instanceof Error ? error.message : '未知错误');
+        }
+      });
     }
 
-    confirmButton.addEventListener('click', async () => {
-      confirmButton.disabled = true;
-      confirmButton.textContent = '写回中...';
+    if (confirmButton) {
+      confirmButton.addEventListener('click', async () => {
+        confirmButton.disabled = true;
+        confirmButton.textContent = '写回中...';
 
-      try {
-        const platform = await confirmDeploymentDraftRequest(items);
-        setPlatformState(platform);
-        updateWorkspacePanels(platform);
-        result.innerHTML = renderConfirmedWorkspace(platform);
-      } catch (error) {
-        result.innerHTML = renderError(error instanceof Error ? error.message : '未知错误');
-      }
-    });
+        try {
+          const platform = await confirmDeploymentDraftRequest(response.draft.items);
+          setPlatformState(platform);
+          updateWorkspacePanels(platform);
+          result.innerHTML = renderConfirmedWorkspace(platform);
+        } catch (error) {
+          result.innerHTML = renderError(error instanceof Error ? error.message : '未知错误');
+        }
+      });
+    }
   };
 
-  bindConfirmButton(getPlatformState().ai.draft.draft.items);
+  bindDraftActions(getPlatformState().ai.draft);
 
   button.addEventListener('click', async () => {
     const platform = getPlatformState();
@@ -176,7 +208,7 @@ export function setupAiAssistantInteraction() {
 
       setPlatformState(nextPlatform);
       result.innerHTML = renderDraft(response);
-      bindConfirmButton(response.draft.items);
+      bindDraftActions(response);
     } catch (error) {
       result.innerHTML = renderError(error instanceof Error ? error.message : '未知错误');
     } finally {

@@ -201,6 +201,12 @@ h1 {
   gap: 12px;
 }
 
+.assistant-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .assistant-input {
   width: 100%;
   padding: 12px 14px;

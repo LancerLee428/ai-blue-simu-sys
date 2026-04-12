@@ -4,6 +4,7 @@ export type DeploymentIntentCommand = {
   targetRegion: string;
   forceType: string;
   objective?: string;
+  regenerateFromDraftId?: string;
 };
 
 export type DeploymentDraftItem = {
@@ -16,6 +17,7 @@ export type DeploymentDraftItem = {
 
 export type DeploymentDraft = {
   type: 'deployment.draft';
+  id: string;
   scenarioId: string;
   summary: string;
   objective: string;

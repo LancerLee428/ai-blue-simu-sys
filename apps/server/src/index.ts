@@ -37,6 +37,7 @@ type PlatformSkeleton = {
 const appName = 'AI Blue Simulation System';
 const appVersion = '0.1.0';
 const port = 3000;
+const startedAt = new Date().toISOString();
 
 export function createPlatformSkeleton(): PlatformSkeleton {
   const scenarioWorkspace = getScenarioWorkspaceState();
@@ -100,6 +101,16 @@ async function handleNodeRequest(request: IncomingMessage, response: ServerRespo
       'Access-Control-Allow-Headers': 'Content-Type',
     });
     response.end();
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/health') {
+    writeJson(response, 200, {
+      status: 'ok',
+      service: 'ai-blue-simu-sys-server',
+      startedAt,
+      port,
+    });
     return;
   }
 

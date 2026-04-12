@@ -167,6 +167,39 @@ h1 {
   line-height: 1.7;
 }
 
+.assistant-error {
+  color: #ffb2c0;
+}
+
+.assistant-interactive-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.assistant-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(130, 162, 255, 0.22);
+  background: rgba(7, 17, 31, 0.88);
+  color: #e5efff;
+}
+
+.assistant-button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #1f6fff, #00d6c9);
+  color: #04111f;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assistant-button:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .module-card li span {
   color: #9fb2d6;
 }

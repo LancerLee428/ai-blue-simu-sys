@@ -23,4 +23,9 @@ export type DeploymentDraft = {
   items: DeploymentDraftItem[];
 };
 
+export type DeploymentDraftResponse = {
+  command: DeploymentIntentCommand;
+  draft: DeploymentDraft;
+};
+
 export const AI_ASSISTANT_MODULE = 'ai-assistant';

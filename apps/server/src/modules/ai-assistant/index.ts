@@ -1,4 +1,4 @@
-import type { DeploymentDraft, DeploymentIntentCommand } from '@ai-blue-simu-sys/ai-core';
+import type { DeploymentDraft, DeploymentDraftResponse, DeploymentIntentCommand } from '@ai-blue-simu-sys/ai-core';
 import { demoScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
 
 export const aiAssistantModule = {
@@ -35,5 +35,14 @@ export function createDeploymentDraft(command: DeploymentIntentCommand): Deploym
         rationale: '保障侦察与电子支援，提升对抗兵力部署后的态势感知能力。',
       },
     ],
+  };
+}
+
+export function createDeploymentDraftResponse(
+  command: DeploymentIntentCommand,
+): DeploymentDraftResponse {
+  return {
+    command,
+    draft: createDeploymentDraft(command),
   };
 }

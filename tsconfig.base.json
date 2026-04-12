@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "@ai-blue-simu-sys/shared": ["packages/shared/src/index.ts"],
+      "@ai-blue-simu-sys/ontology": ["packages/ontology/src/index.ts"],
+      "@ai-blue-simu-sys/scenario": ["packages/scenario/src/index.ts"],
+      "@ai-blue-simu-sys/situation": ["packages/situation/src/index.ts"],
+      "@ai-blue-simu-sys/ai-core": ["packages/ai-core/src/index.ts"],
+      "@ai-blue-simu-sys/governance": ["packages/governance/src/index.ts"]
+    }
+  }
+}

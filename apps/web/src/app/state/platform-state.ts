@@ -4,7 +4,7 @@ import type {
   DeploymentDraftResponse,
 } from '@ai-blue-simu-sys/ai-core';
 
-const API_BASE_URL = 'http://localhost:3000';
+const API_BASE_URL = '/api';
 
 const FALLBACK_PLATFORM: PlatformSkeleton = {
   app: 'AI Blue Simulation System',
@@ -108,7 +108,7 @@ export function setPlatformState(nextState: PlatformSkeleton) {
 
 export async function loadPlatformState() {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/platform-skeleton`);
+    const response = await fetch(`${API_BASE_URL}/platform-skeleton`);
 
     if (!response.ok) {
       throw new Error('平台状态拉取失败');
@@ -126,7 +126,7 @@ export async function loadPlatformState() {
 
 export async function requestDeploymentDraft(command: PlatformSkeleton['ai']['draft']['command']) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/ai/deployment-draft`, {
+    const response = await fetch(`${API_BASE_URL}/ai/deployment-draft`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -153,7 +153,7 @@ export async function confirmDeploymentDraftRequest(items: DeploymentDraftItem[]
   };
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/ai/deployment-confirm`, {
+    const response = await fetch(`${API_BASE_URL}/ai/deployment-confirm`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

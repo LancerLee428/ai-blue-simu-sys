@@ -1,12 +1,19 @@
+import { demoDeploymentPoints } from '@ai-blue-simu-sys/situation';
+
 export function renderSituationWorkbenchModule() {
   return `
     <article class="module-card">
       <p class="module-kicker">Situation Workbench</p>
       <h2>态势工作台</h2>
+      <p class="module-summary">当前已形成 ${demoDeploymentPoints.length} 个部署点位草案</p>
       <ul>
-        <li>地球引擎承载空间态势</li>
-        <li>部署位置与对象状态联动</li>
-        <li>对象详情与空间上下文切换</li>
+        ${demoDeploymentPoints
+          .map(
+            (point) => `
+              <li>${point.name} · ${point.region} · ${point.state}</li>
+            `,
+          )
+          .join('')}
       </ul>
     </article>
   `;

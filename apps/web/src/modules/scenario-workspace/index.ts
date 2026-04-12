@@ -1,12 +1,15 @@
+import { demoScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
+
 export function renderScenarioWorkspaceModule() {
   return `
     <article class="module-card">
       <p class="module-kicker">Scenario Workspace</p>
       <h2>想定工作空间</h2>
+      <p class="module-summary">${demoScenarioWorkspaceState.scenario.name} · ${demoScenarioWorkspaceState.scenario.versionLabel}</p>
       <ul>
-        <li>创建场景 / 保存版本</li>
-        <li>源对象投影到想定</li>
-        <li>形成持续编辑上下文</li>
+        <li>焦点区域：${demoScenarioWorkspaceState.scenario.focusRegion}</li>
+        <li>投影对象数量：${demoScenarioWorkspaceState.scenario.projectedForceCount}</li>
+        <li>状态：${demoScenarioWorkspaceState.scenario.status}</li>
       </ul>
     </article>
   `;

@@ -1,0 +1,311 @@
+<!-- apps/web/src/components/ai-assistant/AIAssistantPanel.vue -->
+<script setup lang="ts">
+import { ref, computed } from 'vue';
+import { useTacticalScenarioStore } from '../../stores/tactical-scenario';
+import PhaseTimeline from './PhaseTimeline.vue';
+import ScenarioPreview from './ScenarioPreview.vue';
+
+const store = useTacticalScenarioStore();
+const inputText = ref('');
+const isCollapsed = ref(false);
+const showScenarioPreview = ref(false);
+
+const canDeploy = computed(() => !!store.currentScenario);
+
+async function handleSend() {
+  const text = inputText.value.trim();
+  if (!text || store.isGenerating) return;
+  inputText.value = '';
+  try {
+    await store.generateScenario(text);
+    showScenarioPreview.value = true;
+  } catch { /* error handled in store */ }
+}
+
+async function handleRefine() {
+  const text = inputText.value.trim();
+  if (!text || store.isGenerating) return;
+  inputText.value = '';
+  try {
+    await store.refineScenario(text);
+  } catch { /* error handled in store */ }
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter' && !e.shiftKey && !store.isGenerating) {
+    e.preventDefault();
+    store.currentScenario ? handleRefine() : handleSend();
+  }
+}
+
+function getMsgClass(role: string) {
+  return role === 'user' ? 'msg-user' : 'msg-assistant';
+}
+</script>
+
+<template>
+  <div class="ai-panel" :class="{ 'is-collapsed': isCollapsed }">
+    <div class="panel-header">
+      <div class="panel-title">
+        <span class="panel-icon">🤖</span>
+        <span>AI 战术助手</span>
+      </div>
+      <button class="icon-btn" @click="isCollapsed = !isCollapsed">
+        {{ isCollapsed ? '□' : '−' }}
+      </button>
+    </div>
+
+    <template v-if="!isCollapsed">
+      <div class="chat-history">
+        <div
+          v-for="msg in store.chatHistory"
+          :key="msg.id"
+          class="chat-msg"
+          :class="getMsgClass(msg.role)"
+        >
+          <div class="msg-role">{{ msg.role === 'user' ? '我' : 'AI' }}</div>
+          <div class="msg-content">{{ msg.content }}</div>
+
+          <template v-if="msg.scenario && msg === store.chatHistory[store.chatHistory.length - 1]">
+            <button class="preview-toggle" @click="showScenarioPreview = !showScenarioPreview">
+              {{ showScenarioPreview ? '隐藏' : '显示' }}方案详情
+            </button>
+            <ScenarioPreview v-if="showScenarioPreview" :scenario="msg.scenario" />
+          </template>
+        </div>
+
+        <div v-if="store.isGenerating" class="chat-msg msg-assistant">
+          <div class="msg-role">AI</div>
+          <div class="msg-content generating">
+            <span>正在生成战术方案</span>
+            <span class="dots">...</span>
+          </div>
+        </div>
+
+        <div v-if="store.error" class="chat-error">{{ store.error }}</div>
+      </div>
+
+      <PhaseTimeline
+        v-if="store.currentScenario"
+        :phases="store.currentScenario.phases"
+        :current-phase-index="store.currentPhaseIndex"
+        :execution-status="store.executionStatus"
+        @execute="store.play()"
+        @pause="store.pause()"
+        @next="store.nextPhase()"
+        @prev="store.prevPhase()"
+        @reset="store.reset()"
+      />
+
+      <div class="panel-actions-row">
+        <button
+          class="action-btn action-btn-primary"
+          :disabled="!canDeploy"
+          @click="store.deployToMap()"
+        >
+          📍 部署到地图
+        </button>
+        <button
+          class="action-btn action-btn-danger"
+          :disabled="!store.currentScenario"
+          @click="store.clearMap()"
+        >
+          🗑 清空地图
+        </button>
+      </div>
+
+      <div class="input-area">
+        <textarea
+          v-model="inputText"
+          class="input-field"
+          :placeholder="store.currentScenario
+            ? '补充或修改方案...'
+            : '描述你的战术意图，如：在台湾北部部署蓝方防御力量，阻止红方从东侧突防...'"
+          rows="3"
+          @keydown="handleKeydown"
+        />
+        <div class="input-footer">
+          <button
+            class="send-btn"
+            :disabled="!inputText.trim() || store.isGenerating"
+            @click="store.currentScenario ? handleRefine() : handleSend()"
+          >
+            {{ store.currentScenario
+              ? (store.isGenerating ? '生成中...' : '修正方案')
+              : (store.isGenerating ? '生成中...' : '发送') }}
+          </button>
+        </div>
+      </div>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.ai-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(4, 11, 20, 0.96);
+  border-left: 1px solid rgba(107, 196, 255, 0.25);
+  overflow: hidden;
+  z-index: 500;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
+}
+.ai-panel.is-collapsed {
+  width: auto;
+  height: auto;
+  bottom: auto;
+}
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(107, 196, 255, 0.15);
+  flex-shrink: 0;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2ebfb;
+}
+.panel-icon { font-size: 16px; }
+.icon-btn {
+  background: none;
+  border: none;
+  color: #6bc4ff;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.icon-btn:hover { background: rgba(107, 196, 255, 0.1); }
+.chat-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-msg { display: flex; flex-direction: column; gap: 4px; }
+.msg-role {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #4a5a6a;
+  letter-spacing: 0.05em;
+}
+.msg-user .msg-role { color: #6bc4ff; }
+.msg-assistant .msg-role { color: #00d6c9; }
+.msg-content {
+  font-size: 13px;
+  color: #b0c4d8;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.msg-user .msg-content {
+  background: rgba(107, 196, 255, 0.08);
+  border-color: rgba(255, 68, 68, 0.15);
+}
+.msg-content.generating { color: #6bc4ff; }
+.msg-content .dots { animation: blink 1s steps(3) infinite; }
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  33% { opacity: 0.3; }
+}
+.preview-toggle {
+  background: none;
+  border: none;
+  color: #6bc4ff;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.chat-error {
+  font-size: 12px;
+  color: #ff6b6b;
+  padding: 8px;
+  background: rgba(255, 68, 68, 0.1);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 68, 68, 0.3);
+}
+.panel-actions-row {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(107, 196, 255, 0.1);
+}
+.action-btn {
+  flex: 1;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(107, 196, 255, 0.25);
+  background: rgba(107, 196, 255, 0.08);
+  color: #6bc4ff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.action-btn:hover:not(:disabled) { background: rgba(107, 196, 255, 0.18); }
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.action-btn-primary {
+  background: rgba(0, 214, 201, 0.15);
+  border-color: rgba(0, 214, 201, 0.4);
+  color: #00d6c9;
+}
+.action-btn-danger {
+  background: rgba(255, 68, 68, 0.1);
+  border-color: rgba(255, 68, 68, 0.25);
+  color: #ff6b6b;
+}
+.input-area {
+  padding: 12px;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(107, 196, 255, 0.15);
+}
+.input-field {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(107, 196, 255, 0.2);
+  border-radius: 8px;
+  color: #e2ebfb;
+  font-size: 13px;
+  padding: 10px;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.input-field:focus { border-color: rgba(107, 196, 255, 0.5); }
+.input-field::placeholder { color: #3a4a5a; }
+.input-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
+.send-btn {
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: none;
+  background: linear-gradient(135deg, #00d6c9, #00a8b3);
+  color: #000;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.send-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+.send-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+</style>

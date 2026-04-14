@@ -31,11 +31,13 @@ export type DeploymentDraftResponse = {
 };
 
 export type DeploymentConfirmCommand = {
+  type: 'deployment.confirm';
   scenarioId: string;
   items: DeploymentDraftItem[];
 };
 
 export type DeploymentRejectCommand = {
+  type: 'deployment.reject';
   scenarioId: string;
   draftId: string;
   reason: string;

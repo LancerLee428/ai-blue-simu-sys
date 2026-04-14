@@ -294,3 +294,141 @@ h1 {
     border-bottom: 1px solid rgba(130, 162, 255, 0.16);
   }
 }
+
+/* ===== 工作台布局样式 ===== */
+.workbench-layout {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+  background: #040b14;
+}
+
+/* 玻璃面板通��样式 */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(142, 164, 201, 0.2);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* 标签页样式 */
+.tab-strip {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(4, 11, 20, 0.5);
+  border-radius: 8px;
+  margin: 12px;
+}
+
+.tab-item {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: #8ea4c9;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.tab-item:hover {
+  color: #cbd5e1;
+  background: rgba(142, 164, 201, 0.1);
+}
+
+.tab-item.active {
+  color: #e2ebfb;
+  background: rgba(142, 164, 201, 0.15);
+  border-color: rgba(142, 164, 201, 0.3);
+}
+
+/* 面板过渡动画 */
+.panel-enter-active,
+.panel-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.panel-enter-from,
+.panel-leave-to {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+
+.panel-right-enter-active,
+.panel-right-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.panel-right-enter-from,
+.panel-right-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(4, 11, 20, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(142, 164, 201, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(142, 164, 201, 0.5);
+}
+
+/* 顶部工具栏样式 */
+.top-toolbar {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(142, 164, 201, 0.2);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.toolbar-button {
+  padding: 8px 16px;
+  border: 1px solid rgba(142, 164, 201, 0.2);
+  border-radius: 8px;
+  background: rgba(4, 11, 20, 0.5);
+  color: #8ea4c9;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.toolbar-button:hover {
+  background: rgba(142, 164, 201, 0.1);
+  border-color: rgba(142, 164, 201, 0.4);
+  color: #cbd5e1;
+}
+
+.toolbar-button.active {
+  background: rgba(142, 164, 201, 0.15);
+  border-color: rgba(142, 164, 201, 0.5);
+  color: #e2ebfb;
+}

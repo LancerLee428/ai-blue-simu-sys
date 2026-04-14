@@ -6,7 +6,7 @@ import type {
 
 const API_BASE_URL = '/api';
 
-const FALLBACK_PLATFORM: PlatformSkeleton = {
+export const FALLBACK_PLATFORM: PlatformSkeleton = {
   app: 'AI Blue Simulation System',
   version: '0.1.0',
   modules: [],

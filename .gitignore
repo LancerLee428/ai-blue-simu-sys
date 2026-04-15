@@ -5,3 +5,4 @@ dist/
 .DS_Store
 .worktrees/
 .env.local
+apps/web/.env.local

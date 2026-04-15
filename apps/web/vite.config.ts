@@ -7,14 +7,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-      },
       '/api/groq': {
         target: 'https://api.groq.com/openai/v1',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/groq/, ''),
+      },
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
       },
     },
   },

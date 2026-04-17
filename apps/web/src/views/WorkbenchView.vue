@@ -12,14 +12,20 @@ import LeftPanelModule from '../components/left-panel/LeftPanelModule.vue';
 import RightPanelModule from '../components/right-panel/RightPanelModule.vue';
 import DeploymentConfigModal from '../components/deployment/DeploymentConfigModal.vue';
 import AIAssistantPanel from '../components/ai-assistant/AIAssistantPanel.vue';
+import ActionPlanPanel from '../components/action-plan/ActionPlanPanel.vue';
 import { MapRenderer } from '../services/map-renderer';
 import { ExecutionEngine } from '../services/execution-engine';
 import { useTacticalScenarioStore } from '../stores/tactical-scenario';
+import { useActionPlanStore } from '../stores/action-plan';
 
 const store = usePlatformStore();
 const tacticalStore = useTacticalScenarioStore();
+const actionPlanStore = useActionPlanStore();
 const { entities, createEntity, updateEntity, deleteEntity } = useEntityState();
 const { execute, undo, redo, canUndo, canRedo } = useCommandSystem();
+
+// ExecutionEngine and ActionPlanPanel refs
+const actionPlanPanelRef = ref<InstanceType<typeof ActionPlanPanel> | null>(null);
 
 // 撤销重做处理函数
 function handleUndo() {
@@ -49,6 +55,11 @@ function handleViewerReady(viewer: Cesium.Viewer) {
   const renderer = new MapRenderer(viewer);
   const engine = new ExecutionEngine(viewer, renderer);
   tacticalStore.initEngine(engine, renderer);
+
+  // 注入 ExecutionEngine 到 ActionPlanPanel
+  if (actionPlanPanelRef.value) {
+    actionPlanPanelRef.value.initEngine(engine);
+  }
 }
 
 /**
@@ -160,8 +171,8 @@ const scenarioEntities = computed(() => {
       @redo="handleRedo"
     />
 
-    <!-- Left panel: object list -->
-    <LeftPanelModule />
+    <!-- Left panel: action plan management -->
+    <ActionPlanPanel ref="actionPlanPanelRef" />
 
     <!-- Right panel: AI assistant + resource tree -->
     <RightPanelModule />

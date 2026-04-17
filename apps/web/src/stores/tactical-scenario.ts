@@ -12,6 +12,7 @@ import { TacticalValidator } from '../services/tactical-validator';
 import { WordExporter } from '../services/word-exporter';
 import type { MapRenderer } from '../services/map-renderer';
 import type { ExecutionEngine } from '../services/execution-engine';
+import { useActionPlanStore } from './action-plan';
 
 const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
 
@@ -134,6 +135,14 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
         executionEngine.load(finalScenario);
         mapRenderer.renderScenario(finalScenario);
         mapRenderer.flyToScenario(finalScenario);
+      }
+
+      // 自动创建 ActionPlan
+      try {
+        const actionPlanStore = useActionPlanStore();
+        actionPlanStore.createPlan(finalScenario, finalScenario.summary);
+      } catch (err) {
+        console.error('Failed to create action plan:', err);
       }
 
       addAssistantMessage('战术方案已生成并部署到地图！', finalScenario);

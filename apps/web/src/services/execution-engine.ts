@@ -46,6 +46,11 @@ export class ExecutionEngine {
   // 防止同一相位内事件重复触发
   private firedEventsThisPhase = new Set<string>();
 
+  // Speed control
+  private speed: number = 1;
+  private lastRealTime: number = 0;
+  private paused: boolean = false;
+
   constructor(viewer: Cesium.Viewer, renderer: MapRenderer) {
     this.viewer = viewer;
     this.renderer = renderer;
@@ -82,17 +87,80 @@ export class ExecutionEngine {
     this.status = 'idle';
   }
 
+  /**
+   * 设置倍速
+   */
+  setSpeed(speed: number) {
+    this.speed = Math.max(0.1, Math.min(20, speed)); // 限制在 0.1x - 20x
+  }
+
+  /**
+   * 获取当前倍速
+   */
+  getSpeed(): number {
+    return this.speed;
+  }
+
+  /**
+   * 步进控制（前进或后退指定秒数）
+   */
+  step(deltaSeconds: number) {
+    this.paused = true;
+    const phase = this.scenario?.phases[this.currentPhaseIndex];
+    if (!phase) return;
+
+    const currentElapsed = (performance.now() - this.phaseStartTime) / 1000;
+    const newElapsed = Math.max(0, Math.min(phase.duration, currentElapsed + deltaSeconds));
+    this.phaseStartTime = performance.now() - (newElapsed * 1000);
+
+    this.updateEntitiesToTime(newElapsed * 1000);
+
+    this.onEventTrigger?.({
+      type: 'movement',
+      timestamp: newElapsed,
+      sourceEntityId: '',
+      detail: `步进到 T+${newElapsed.toFixed(1)}秒`,
+    } as any);
+  }
+
+  /**
+   * 更新实体到指定时间
+   */
+  private updateEntitiesToTime(phaseElapsed: number) {
+    // 推进实体位置（线性插值）
+    this.entityRouteSegments.forEach((segments, entityId) => {
+      // Find the last segment that has started
+      let activeSegment: typeof segments[number] | null = null;
+      for (let i = segments.length - 1; i >= 0; i--) {
+        const seg = segments[i];
+        if (phaseElapsed >= seg.startMs) {
+          activeSegment = seg;
+          break;
+        }
+      }
+      if (activeSegment) {
+        const segElapsed = phaseElapsed - activeSegment.startMs;
+        const t = Math.max(0, Math.min(1, segElapsed / activeSegment.durationMs));
+        const newPos = lerpPosition(activeSegment.from, activeSegment.to, t);
+        this.entityPositions.set(entityId, newPos);
+        this.renderer.updateEntityPosition(entityId, newPos);
+      }
+    });
+  }
+
   play(): void {
     if (!this.scenario || this.currentPhaseIndex >= this.scenario.phases.length) return;
     this.status = 'running';
+    this.paused = false;
+    this.lastRealTime = performance.now();
     this.notifyStatusChange();
-    this.phaseStartTime = performance.now();
     this.firedEventsThisPhase.clear();
     this.runAnimationLoop();
   }
 
   pause(): void {
     this.status = 'paused';
+    this.paused = true;
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -143,7 +211,7 @@ export class ExecutionEngine {
     this.notifyStatusChange();
   }
 
-  getStatus(): { status: ExecutionStatus; currentPhaseIndex: number; totalPhases: number; currentPhase: Phase | null; progress: number } {
+  getStatus(): { status: ExecutionStatus; currentPhaseIndex: number; totalPhases: number; currentPhase: Phase | null; progress: number; speed: number; currentTime: number } {
     const phase = this.scenario?.phases[this.currentPhaseIndex] ?? null;
     const elapsed = performance.now() - this.phaseStartTime;
     const progress = phase ? Math.min(1, elapsed / (phase.duration * 1000)) : 0;
@@ -153,6 +221,8 @@ export class ExecutionEngine {
       totalPhases: this.scenario?.phases.length ?? 0,
       currentPhase: phase,
       progress,
+      speed: this.speed,
+      currentTime: elapsed / 1000,
     };
   }
 
@@ -161,32 +231,21 @@ export class ExecutionEngine {
   setOnStatusChange(cb: (status: ExecutionStatus) => void) { this.onStatusChange = cb; }
 
   private runAnimationLoop(): void {
-    if (this.status !== 'running') return;
+    if (this.status !== 'running' || this.paused) return;
 
     const now = performance.now();
-    const phaseElapsed = now - this.phaseStartTime;
+    const realDelta = now - this.lastRealTime;
+    this.lastRealTime = now;
+
+    // Apply speed multiplier
+    const adjustedDelta = realDelta * this.speed;
+    const phaseElapsed = (now - this.phaseStartTime) + (adjustedDelta - realDelta);
+
     const phase = this.scenario?.phases[this.currentPhaseIndex];
     if (!phase) return;
 
     // 推进实体位置（线性插值）
-    this.entityRouteSegments.forEach((segments, entityId) => {
-      // Find the last segment that has started
-      let activeSegment: typeof segments[number] | null = null;
-      for (let i = segments.length - 1; i >= 0; i--) {
-        const seg = segments[i];
-        if (phaseElapsed >= seg.startMs) {
-          activeSegment = seg;
-          break;
-        }
-      }
-      if (activeSegment) {
-        const segElapsed = phaseElapsed - activeSegment.startMs;
-        const t = Math.max(0, Math.min(1, segElapsed / activeSegment.durationMs));
-        const newPos = lerpPosition(activeSegment.from, activeSegment.to, t);
-        this.entityPositions.set(entityId, newPos);
-        this.renderer.updateEntityPosition(entityId, newPos);
-      }
-    });
+    this.updateEntitiesToTime(phaseElapsed);
 
     // 触发事件
     phase.events.forEach((event) => {

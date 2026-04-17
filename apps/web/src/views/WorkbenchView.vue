@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import * as Cesium from 'cesium';
 import { usePlatformStore } from '../stores/platform';
 import { useEntityState } from '../composables/useEntityState';
@@ -26,6 +26,18 @@ const { execute, undo, redo, canUndo, canRedo } = useCommandSystem();
 
 // ExecutionEngine and ActionPlanPanel refs
 const actionPlanPanelRef = ref<InstanceType<typeof ActionPlanPanel> | null>(null);
+const executionEngineRef = ref<typeof ExecutionEngine | null>(null);
+
+// 组件卸载时清理
+onUnmounted(() => {
+  if (executionEngineRef.value) {
+    executionEngineRef.value.reset();
+    executionEngineRef.value = null;
+  }
+  if (actionPlanPanelRef.value) {
+    actionPlanPanelRef.value = null;
+  }
+});
 
 // 撤销重做处理函数
 function handleUndo() {
@@ -54,11 +66,15 @@ onMounted(() => {
 function handleViewerReady(viewer: Cesium.Viewer) {
   const renderer = new MapRenderer(viewer);
   const engine = new ExecutionEngine(viewer, renderer);
+
+  // 保存引用以便清理
+  executionEngineRef.value = engine;
+
   tacticalStore.initEngine(engine, renderer);
 
   // 注入 ExecutionEngine 到 ActionPlanPanel
   if (actionPlanPanelRef.value) {
-    actionPlanPanelRef.value.initEngine(engine);
+    actionPlanPanel.value.initEngine(engine);
   }
 }
 

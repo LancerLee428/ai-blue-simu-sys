@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium';
+import type { PlatformType, EntityStatus } from '../types/tactical-scenario';
 
 /**
  * 态势状态视觉编码
@@ -49,6 +50,42 @@ export const FORCE_COLORS = {
     attack: Cesium.Color.fromCssColorString('#0066ff'),
   },
 } as const;
+
+/**
+ * 实体类型到像素大小的映射
+ */
+export const ENTITY_SIZES: Record<PlatformType, number> = {
+  'aircraft-fighter': 14,
+  'aircraft-bomber': 18,
+  'aircraft-recon': 10,
+  'aircraft-helicopter': 12,
+  'ship': 16,
+  'ground-vehicle': 12,
+  'missile': 8,
+  'drone': 8,
+};
+
+/**
+ * 实体状态对应的尺寸倍数
+ */
+export const STATUS_SIZE_MULTIPLIERS: Record<EntityStatus, number> = {
+  'planned': 0.8,
+  'deployed': 1.0,
+  'engaged': 1.2,
+  'destroyed': 0.5,
+};
+
+/**
+ * 获取实体在特定状态下的像素大小
+ */
+export function getEntityPixelSize(
+  baseType: PlatformType,
+  status: EntityStatus
+): number {
+  const baseSize = ENTITY_SIZES[baseType];
+  const multiplier = STATUS_SIZE_MULTIPLIERS[status];
+  return baseSize * multiplier;
+}
 
 /**
  * ScenarioEntity 接口定义

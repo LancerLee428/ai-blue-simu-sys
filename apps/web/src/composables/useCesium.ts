@@ -19,9 +19,11 @@ export function useCesium() {
       fullscreenButton: false,
       infoBox: false,
       selectionIndicator: false,
-      // 使用 Cesium Ion 的默认底图（不需要 API Key）
-      baseLayer: Cesium.ImageryLayer.fromProviderAsync(
-        Cesium.IonImageryProvider.fromAssetId(3)
+      // 使用 OpenStreetMap 作为底图（不需要 API Key）
+      baseLayer: new Cesium.ImageryLayer(
+        new Cesium.OpenStreetMapImageryProvider({
+          url: 'https://a.tile.openstreetmap.org/',
+        })
       ),
     });
 

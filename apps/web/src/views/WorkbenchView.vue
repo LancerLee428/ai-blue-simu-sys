@@ -75,7 +75,7 @@ function handleViewerReady(viewer: Cesium.Viewer) {
 
   // 注入 ExecutionEngine 到 ActionPlanPanel
   if (actionPlanPanelRef.value) {
-    actionPlanPanel.value.initEngine(engine);
+    actionPlanPanelRef.value.initEngine(engine);
   }
 }
 

@@ -6,6 +6,8 @@ import type {
   ForceSide,
   Route,
   DetectionZone,
+  EntityStatus,
+  PlatformType,
 } from '../types/tactical-scenario';
 import { FORCE_COLORS, getEntityPixelSize } from './cesium-graphics';
 
@@ -53,6 +55,7 @@ export class MapRenderer {
     scenario.forces.forEach((force) => {
       const colors = FORCE_COLORS[force.side];
       force.entities.forEach((entity) => {
+        // TODO: Use entity.status when entities have status field
         const pixelSize = getEntityPixelSize(entity.type, 'planned');
 
         const cesiumEntity = this.viewer.entities.add({
@@ -241,15 +244,15 @@ export class MapRenderer {
   /**
    * 更新实体状态样式
    */
-  updateEntityStatus(entityId: string, status: string, side: ForceSide): void {
+  updateEntityStatus(entityId: string, status: EntityStatus, side: ForceSide): void {
     const cesiumEntity = this.viewer.entities.getById(entityId);
     if (cesiumEntity && cesiumEntity.point) {
       const colors = FORCE_COLORS[side];
-      const statusSizes: Record<string, number> = {
-        planned: 10, deployed: 14, engaged: 18, destroyed: 8,
-      };
+      const entityType = (cesiumEntity as any).__entityType as PlatformType;
+
+      const pixelSize = getEntityPixelSize(entityType, status);
       const pointAny = cesiumEntity.point as any;
-      pointAny.pixelSize = statusSizes[status] || 14;
+      pointAny.pixelSize = pixelSize;
       pointAny.color = status === 'destroyed'
         ? Cesium.Color.GRAY
         : colors.primary;

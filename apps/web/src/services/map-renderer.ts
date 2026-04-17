@@ -7,7 +7,7 @@ import type {
   Route,
   DetectionZone,
 } from '../types/tactical-scenario';
-import { FORCE_COLORS } from './cesium-graphics';
+import { FORCE_COLORS, getEntityPixelSize } from './cesium-graphics';
 
 /**
  * Cesium 地图渲染引擎
@@ -53,6 +53,8 @@ export class MapRenderer {
     scenario.forces.forEach((force) => {
       const colors = FORCE_COLORS[force.side];
       force.entities.forEach((entity) => {
+        const pixelSize = getEntityPixelSize(entity.type, 'planned');
+
         const cesiumEntity = this.viewer.entities.add({
           id: entity.id,
           name: entity.name,
@@ -62,7 +64,7 @@ export class MapRenderer {
             entity.position.altitude
           ),
           point: {
-            pixelSize: 14,
+            pixelSize,
             color: colors.primary,
             outlineColor: Cesium.Color.WHITE,
             outlineWidth: 2,
@@ -79,8 +81,9 @@ export class MapRenderer {
         });
         (cesiumEntity as any).__tacticalLayer = true;
         (cesiumEntity as any).__originalColor = colors.primary;
-        (cesiumEntity as any).__originalPixelSize = 14;
+        (cesiumEntity as any).__originalPixelSize = pixelSize;
         (cesiumEntity as any).__side = force.side;
+        (cesiumEntity as any).__entityType = entity.type;
         this.entityIdSet.add(entity.id);
       });
     });
@@ -289,20 +292,15 @@ export class MapRenderer {
    * 聚焦到战术区域
    */
   flyToScenario(scenario: TacticalScenario): void {
-    const positions: Cesium.Cartesian3[] = [];
-    scenario.forces.forEach((force) => {
-      force.entities.forEach((entity) => {
-        positions.push(
-          Cesium.Cartesian3.fromDegrees(
-            entity.position.longitude,
-            entity.position.latitude,
-            entity.position.altitude
-          )
-        );
-      });
-    });
-    if (positions.length > 0) {
-      this.viewer.flyTo(positions as any, {
+    const entityIds = scenario.forces.flatMap((force) =>
+      force.entities.map((entity) => entity.id)
+    );
+    const entities = entityIds
+      .map((id) => this.viewer.entities.getById(id))
+      .filter((e): e is Cesium.Entity => e !== undefined);
+
+    if (entities.length > 0) {
+      this.viewer.flyTo(entities, {
         duration: 2,
         offset: new Cesium.HeadingPitchRange(
           Cesium.Math.toRadians(0),

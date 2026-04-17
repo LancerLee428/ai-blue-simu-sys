@@ -8,13 +8,7 @@ export function useCesium() {
   async function initViewer(container: HTMLElement) {
     if (viewer.value) return;
 
-    // 使用内置离线瓦片
-    const imageryProvider = await Cesium.TileMapServiceImageryProvider.fromUrl(
-      Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII')
-    );
-
     viewer.value = new Cesium.Viewer(container, {
-      baseLayer: new Cesium.ImageryLayer(imageryProvider),
       animation: false,
       timeline: false,
       baseLayerPicker: false,
@@ -25,6 +19,10 @@ export function useCesium() {
       fullscreenButton: false,
       infoBox: false,
       selectionIndicator: false,
+      // 使用 Cesium Ion 的默认底图（不需要 API Key）
+      baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+        Cesium.IonImageryProvider.fromAssetId(3)
+      ),
     });
 
     // 禁用光照效果

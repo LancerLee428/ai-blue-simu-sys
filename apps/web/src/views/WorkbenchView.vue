@@ -30,8 +30,9 @@ const executionEngineRef = ref<typeof ExecutionEngine | null>(null);
 
 // 组件卸载时清理
 onUnmounted(() => {
+  // 先停止执行引擎，但不重置（避免重复销毁 Cesium viewer）
   if (executionEngineRef.value) {
-    executionEngineRef.value.reset();
+    executionEngineRef.value.pause();
     executionEngineRef.value = null;
   }
   if (actionPlanPanelRef.value) {

@@ -209,9 +209,17 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   }
 
   function clearMap() {
-    if (!mapRenderer || !executionEngine) return;
-    mapRenderer.clearTacticalLayers();
-    executionEngine.reset();
+    if (!mapRenderer) return;
+    try {
+      mapRenderer.clearTacticalLayers();
+    } catch (err) {
+      console.warn('Failed to clear tactical layers:', err);
+    }
+    try {
+      executionEngine?.reset();
+    } catch (err) {
+      console.warn('Failed to reset execution engine:', err);
+    }
     currentPhaseIndex.value = 0;
     currentScenario.value = null;
     addSystemMessage('地图已清空');

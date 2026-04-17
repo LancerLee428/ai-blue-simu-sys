@@ -1,0 +1,65 @@
+<h2>实现路径选择</h2>
+<p class="subtitle">三种复杂度不同的实现路径，权衡开发成本与功能深度</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>快速 MVP</h3>
+      <p>AI 输出 JSON → 前端解析渲染 → 阶段手动控制</p>
+      <ul>
+        <li>AI prompt 模板 + JSON Schema 约束输出</li>
+        <li>路由/探测范围/打击点全部以 Cesium 静态 graphics 渲染</li>
+        <li>阶段切换触发实体位置插值动画</li>
+        <li>预计开发时间：短</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>结构化方案引擎</h3>
+      <p>引入 Scenario DSL + 专用的 Cesium Graphics Layer</p>
+      <ul>
+        <li>定义战术方案数据模型（包含路线、范围、打击事件）</li>
+        <li>Cesium Entity + Primitive 混合渲染层</li>
+        <li>轻量执行引擎：定时器驱动阶段推进</li>
+        <li>预计开发时间：中</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>完整仿真平台</h3>
+      <p>态势数据模型 + 仿真引擎 + 事件系统</p>
+      <ul>
+        <li>完整的态势-事件-状态机模型</li>
+        <li>实体移动物理引擎（速度、加速度、燃油消耗）</li>
+        <li>探测/打击判定逻辑（距离检测、命中率）</li>
+        <li>预计开发时间：长</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>推荐 B</h4>
+    <ul>
+      <li>A 太简陋，后续扩展代价高</li>
+      <li>C 投入产出比低，先验证价值再投入</li>
+      <li>B 有边界清晰的架构，可渐进演进</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>B 的边界</h4>
+    <ul>
+      <li>执行引擎不含物理仿真（移动是插值，非物理）</li>
+      <li>打击判定为规则驱动，非概率模型</li>
+      <li>可演进到 C，但不需要一开始就做</li>
+    </ul>
+  </div>
+</div>

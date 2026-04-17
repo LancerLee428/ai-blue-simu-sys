@@ -1,6 +1,6 @@
 <!-- apps/web/src/components/ai-assistant/AIAssistantPanel.vue -->
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { useTacticalScenarioStore } from '../../stores/tactical-scenario';
 import PhaseTimeline from './PhaseTimeline.vue';
 import ScenarioPreview from './ScenarioPreview.vue';
@@ -9,8 +9,17 @@ const store = useTacticalScenarioStore();
 const inputText = ref('');
 const isCollapsed = ref(false);
 const showScenarioPreview = ref(false);
+const chatHistoryEl = ref<HTMLElement | null>(null);
 
 const canDeploy = computed(() => !!store.currentScenario);
+
+// 自动滚动到底部
+watch(() => store.chatHistory.length, async () => {
+  await nextTick();
+  if (chatHistoryEl.value) {
+    chatHistoryEl.value.scrollTop = chatHistoryEl.value.scrollHeight;
+  }
+});
 
 async function handleSend() {
   const text = inputText.value.trim();
@@ -41,6 +50,24 @@ function handleKeydown(e: KeyboardEvent) {
 function getMsgClass(role: string) {
   return role === 'user' ? 'msg-user' : 'msg-assistant';
 }
+
+async function handleExport() {
+  try {
+    await store.exportToWord();
+  } catch {
+    /* error handled in store */
+  }
+}
+
+// 检测思维链内容是否还在生成中
+function isThinking(msg: typeof store.chatHistory[0]) {
+  return store.isGenerating && !msg.scenario && msg.content;
+}
+
+// 检测是否是最终消息（包含方案）
+function isFinalMessage(msg: typeof store.chatHistory[0]) {
+  return !!msg.scenario;
+}
 </script>
 
 <template>
@@ -56,25 +83,42 @@ function getMsgClass(role: string) {
     </div>
 
     <template v-if="!isCollapsed">
-      <div class="chat-history">
+      <div class="chat-history" ref="chatHistoryEl">
         <div
           v-for="msg in store.chatHistory"
           :key="msg.id"
           class="chat-msg"
           :class="getMsgClass(msg.role)"
         >
-          <div class="msg-role">{{ msg.role === 'user' ? '我' : 'AI' }}</div>
-          <div class="msg-content">{{ msg.content }}</div>
+          <template v-if="msg.role === 'user'">
+            <div class="msg-role">我</div>
+            <div class="msg-content">{{ msg.content }}</div>
+          </template>
 
-          <template v-if="msg.scenario && msg === store.chatHistory[store.chatHistory.length - 1]">
-            <button class="preview-toggle" @click="showScenarioPreview = !showScenarioPreview">
-              {{ showScenarioPreview ? '隐藏' : '显示' }}方案详情
-            </button>
-            <ScenarioPreview v-if="showScenarioPreview" :scenario="msg.scenario" />
+          <template v-else>
+            <!-- 思维链消息 -->
+            <template v-if="!msg.scenario">
+              <div class="msg-role">🤔 战术分析</div>
+              <div class="thinking-content">{{ msg.content }}</div>
+            </template>
+
+            <!-- 最终方案消息 -->
+            <template v-else>
+              <div class="msg-role">📋 战术方案</div>
+              <div class="msg-content">{{ msg.content }}</div>
+
+              <template v-if="msg === store.chatHistory[store.chatHistory.length - 1]">
+                <button class="preview-toggle" @click="showScenarioPreview = !showScenarioPreview">
+                  {{ showScenarioPreview ? '隐藏' : '显示' }}方案详情
+                </button>
+                <ScenarioPreview v-if="showScenarioPreview" :scenario="msg.scenario" />
+              </template>
+            </template>
           </template>
         </div>
 
-        <div v-if="store.isGenerating" class="chat-msg msg-assistant">
+        <!-- 正在生成中的加载指示器 -->
+        <div v-if="store.isGenerating && !store.thinkingChain" class="chat-msg msg-assistant">
           <div class="msg-role">AI</div>
           <div class="msg-content generating">
             <span>正在生成战术方案</span>
@@ -104,6 +148,13 @@ function getMsgClass(role: string) {
           @click="store.deployToMap()"
         >
           📍 部署到地图
+        </button>
+        <button
+          class="action-btn action-btn-secondary"
+          :disabled="!canDeploy"
+          @click="handleExport"
+        >
+          📄 导出 Word
         </button>
         <button
           class="action-btn action-btn-danger"
@@ -205,6 +256,27 @@ function getMsgClass(role: string) {
 }
 .msg-user .msg-role { color: #6bc4ff; }
 .msg-assistant .msg-role { color: #00d6c9; }
+
+/* 思维链样式 */
+.thinking-content {
+  font-size: 12px;
+  color: #9ab;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(107, 196, 255, 0.15);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 消息内容 */
 .msg-content {
   font-size: 13px;
   color: #b0c4d8;
@@ -267,6 +339,11 @@ function getMsgClass(role: string) {
   background: rgba(0, 214, 201, 0.15);
   border-color: rgba(0, 214, 201, 0.4);
   color: #00d6c9;
+}
+.action-btn-secondary {
+  background: rgba(107, 196, 255, 0.15);
+  border-color: rgba(107, 196, 255, 0.4);
+  color: #6bc4ff;
 }
 .action-btn-danger {
   background: rgba(255, 68, 68, 0.1);

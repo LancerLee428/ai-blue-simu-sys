@@ -8,6 +8,8 @@ import type {
   Phase,
 } from '../types/tactical-scenario';
 import { AiTacticalService } from '../services/ai-tactical';
+import { TacticalValidator } from '../services/tactical-validator';
+import { WordExporter } from '../services/word-exporter';
 import type { MapRenderer } from '../services/map-renderer';
 import type { ExecutionEngine } from '../services/execution-engine';
 
@@ -20,10 +22,15 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   const executionStatus = ref<ExecutionStatus>('idle');
   const currentPhaseIndex = ref(0);
   const isGenerating = ref(false);
+  const thinkingChain = ref<string>(''); // 思维链内容
   const error = ref<string | null>(null);
 
   // AI 服务（延迟初始化）
   let aiService: AiTacticalService | null = null;
+  let wordExporter: WordExporter | null = null;
+
+  // 战术验证器
+  const validator = new TacticalValidator();
 
   // 引擎引用（由外部注入）
   let executionEngine: ExecutionEngine | null = null;
@@ -56,30 +63,90 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     return aiService;
   }
 
+  function ensureWordExporter() {
+    if (!wordExporter) {
+      wordExporter = new WordExporter();
+    }
+    return wordExporter;
+  }
+
   // --- 对话操作 ---
 
   async function generateScenario(userIntent: string) {
     isGenerating.value = true;
     error.value = null;
+    thinkingChain.value = '';
 
     addUserMessage(userIntent);
 
+    // 添加一个空的思维链消息
+    const thinkingMsgId = `msg-${Date.now()}-thinking`;
+    chatHistory.value.push({
+      id: thinkingMsgId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    });
+
     try {
       const service = ensureAiService();
-      const scenario = await service.generateScenario(userIntent);
 
-      currentScenario.value = scenario;
-      addAssistantMessage('战术方案已生成！点击"部署到地图"查看。', scenario);
+      // 使用流式生成，同时显示思维链
+      let finalScenario: TacticalScenario | null = null;
 
-      if (executionEngine && mapRenderer) {
-        executionEngine.load(scenario);
-        mapRenderer.renderScenario(scenario);
+      const streamGen = service.generateScenarioStream(userIntent, (text) => {
+        thinkingChain.value += text;
+        // 实时更新思维链消息内容
+        const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
+        if (msgIndex !== -1) {
+          chatHistory.value[msgIndex].content = thinkingChain.value;
+        }
+      });
+
+      // 消费流并获取最终结果
+      let result = await streamGen.next();
+      while (!result.done) {
+        result = await streamGen.next();
+      }
+      finalScenario = result.value;
+
+      if (!finalScenario) {
+        throw new Error('方案生成失败');
       }
 
-      return scenario;
+      // 执行战术验证
+      const validationResult = validator.validate(finalScenario);
+      if (!validationResult.valid) {
+        const errorMsg = validationResult.errors.map(e => e.message).join('; ');
+        throw new Error(`战术验证失败: ${errorMsg}`);
+      }
+
+      currentScenario.value = finalScenario;
+
+      // 更新思维链消息
+      const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
+      if (msgIndex !== -1) {
+        chatHistory.value[msgIndex].scenario = finalScenario;
+      }
+
+      // 渲染到地图并自动定位
+      if (executionEngine && mapRenderer) {
+        executionEngine.load(finalScenario);
+        mapRenderer.renderScenario(finalScenario);
+        mapRenderer.flyToScenario(finalScenario);
+      }
+
+      addAssistantMessage('战术方案已生成并部署到地图！', finalScenario);
+
+      return finalScenario;
     } catch (err) {
       const msg = err instanceof Error ? err.message : '生成失败';
       error.value = msg;
+      // 更新思维链消息为错误信息
+      const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
+      if (msgIndex !== -1) {
+        chatHistory.value[msgIndex].content = `生成失败: ${msg}`;
+      }
       addAssistantMessage(`生成失败: ${msg}`);
       throw err;
     } finally {
@@ -94,6 +161,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
 
     isGenerating.value = true;
     error.value = null;
+    thinkingChain.value = '';
 
     addUserMessage(feedback);
 
@@ -104,9 +172,11 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
       currentScenario.value = refined;
       addAssistantMessage('方案已更新！', refined);
 
+      // 渲染到地图并自动定位
       if (executionEngine && mapRenderer) {
         executionEngine.load(refined);
         mapRenderer.renderScenario(refined);
+        mapRenderer.flyToScenario(refined);
       }
 
       return refined;
@@ -195,6 +265,24 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     chatHistory.value = [];
   }
 
+  // --- 导出操作 ---
+
+  async function exportToWord() {
+    if (!currentScenario.value) {
+      throw new Error('当前没有方案可导出');
+    }
+
+    try {
+      const exporter = ensureWordExporter();
+      await exporter.exportToWord(currentScenario.value, thinkingChain.value);
+      addSystemMessage('方案已导出为 Word 文档');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '导出失败';
+      error.value = msg;
+      addSystemMessage(`导出失败: ${msg}`);
+    }
+  }
+
   return {
     // 状态
     currentScenario,
@@ -202,6 +290,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     executionStatus,
     currentPhaseIndex,
     isGenerating,
+    thinkingChain,
     error,
     // 方法
     initEngine,
@@ -215,5 +304,6 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     prevPhase,
     reset,
     clearHistory,
+    exportToWord,
   };
 });

@@ -14,7 +14,7 @@ import type { MapRenderer } from '../services/map-renderer';
 import type { ExecutionEngine } from '../services/execution-engine';
 import { useActionPlanStore } from './action-plan';
 
-const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
+const LLM_API_KEY = import.meta.env.VITE_LLM_API_KEY || '';
 
 export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   // 状态
@@ -56,10 +56,10 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
 
   function ensureAiService() {
     if (!aiService) {
-      if (!GROQ_KEY) {
-        throw new Error('未配置 Groq API Key，请设置 VITE_GROQ_API_KEY 环境变量');
+      if (!LLM_API_KEY) {
+        throw new Error('未配置 LLM API Key，请设置 VITE_LLM_API_KEY 环境变量');
       }
-      aiService = new AiTacticalService(GROQ_KEY);
+      aiService = new AiTacticalService(LLM_API_KEY);
     }
     return aiService;
   }
@@ -89,37 +89,63 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
       timestamp: Date.now(),
     });
 
+    const MAX_RETRIES = 2;
+
     try {
       const service = ensureAiService();
 
-      // 使用流式生成，同时显示思维链
       let finalScenario: TacticalScenario | null = null;
+      let lastValidationErrors = '';
 
-      const streamGen = service.generateScenarioStream(userIntent, (text) => {
-        thinkingChain.value += text;
-        // 实时更新思维链消息内容
-        const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
-        if (msgIndex !== -1) {
-          chatHistory.value[msgIndex].content = thinkingChain.value;
+      // 首次生成 + 最多 MAX_RETRIES 次自动修正
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const isRetry = attempt > 0;
+        const currentIntent = isRetry
+          ? `上一次生成的方案存在以下问题，请修正：\n${lastValidationErrors}\n\n原始需求：${userIntent}`
+          : userIntent;
+
+        if (isRetry) {
+          addSystemMessage(`验证未通过，自动修正中 (${attempt}/${MAX_RETRIES})...`);
         }
-      });
 
-      // 消费流并获取最终结果
-      let result = await streamGen.next();
-      while (!result.done) {
-        result = await streamGen.next();
+        // 使用流式生成
+        const streamGen = service.generateScenarioStream(currentIntent, (text) => {
+          thinkingChain.value += text;
+          const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
+          if (msgIndex !== -1) {
+            chatHistory.value[msgIndex].content = thinkingChain.value;
+          }
+        });
+
+        // 消费流并获取最终结果
+        let result = await streamGen.next();
+        while (!result.done) {
+          result = await streamGen.next();
+        }
+        finalScenario = result.value;
+
+        if (!finalScenario) {
+          throw new Error('方案生成失败');
+        }
+
+        // 执行战术验证
+        const validationResult = validator.validate(finalScenario);
+        if (validationResult.valid) {
+          break; // 验证通过，跳出循环
+        }
+
+        lastValidationErrors = validationResult.errors.map(e => e.message).join('\n');
+
+        if (attempt === MAX_RETRIES) {
+          // 最后一次重试仍失败: 记录警告但不阻塞，使用当前方案
+          console.warn(`[战术验证] ${MAX_RETRIES} 次重试后仍有问题:\n${lastValidationErrors}`);
+          addSystemMessage(`⚠️ 方案存在部分约束问题（已尝试 ${MAX_RETRIES} 次修正）:\n${lastValidationErrors}`);
+          // 不再 throw，使用当前方案继续
+        }
       }
-      finalScenario = result.value;
 
       if (!finalScenario) {
         throw new Error('方案生成失败');
-      }
-
-      // 执行战术验证
-      const validationResult = validator.validate(finalScenario);
-      if (!validationResult.valid) {
-        const errorMsg = validationResult.errors.map(e => e.message).join('; ');
-        throw new Error(`战术验证失败: ${errorMsg}`);
       }
 
       currentScenario.value = finalScenario;
@@ -282,6 +308,30 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     chatHistory.value = [];
   }
 
+  // --- XML 导入 ---
+
+  function loadScenario(scenario: TacticalScenario) {
+    currentScenario.value = scenario;
+
+    if (executionEngine && mapRenderer) {
+      executionEngine.load(scenario);
+      mapRenderer.renderScenario(scenario);
+      mapRenderer.flyToScenario(scenario);
+    }
+
+    try {
+      const actionPlanStore = useActionPlanStore();
+      actionPlanStore.createPlan(scenario, scenario.scenarioMetadata?.name ?? scenario.summary);
+    } catch (err) {
+      console.error('Failed to create action plan:', err);
+    }
+
+    addAssistantMessage(
+      `XML 想定已导入：${scenario.scenarioMetadata?.name ?? scenario.id}`,
+      scenario,
+    );
+  }
+
   // --- 导出操作 ---
 
   async function exportToWord() {
@@ -322,5 +372,6 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     reset,
     clearHistory,
     exportToWord,
+    loadScenario,
   };
 });

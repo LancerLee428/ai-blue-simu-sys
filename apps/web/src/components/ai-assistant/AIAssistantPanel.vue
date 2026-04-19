@@ -2,6 +2,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue';
 import { useTacticalScenarioStore } from '../../stores/tactical-scenario';
+import { XmlScenarioParser } from '../../services/xml-scenario-parser';
+import { XmlScenarioExporter } from '../../services/xml-scenario-exporter';
 import PhaseTimeline from './PhaseTimeline.vue';
 import ScenarioPreview from './ScenarioPreview.vue';
 
@@ -10,6 +12,39 @@ const inputText = ref('');
 const isCollapsed = ref(false);
 const showScenarioPreview = ref(false);
 const chatHistoryEl = ref<HTMLElement | null>(null);
+const fileInput = ref<HTMLInputElement | null>(null);
+
+const xmlParser = new XmlScenarioParser();
+const xmlExporter = new XmlScenarioExporter();
+
+// 拖拽状态
+const panelEl = ref<HTMLElement | null>(null);
+const dragPos = ref({ x: 0, y: 0 });
+const isDragging = ref(false);
+
+function onDragStart(e: MouseEvent) {
+  if (!isCollapsed.value) return;
+  isDragging.value = true;
+  const el = panelEl.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const offsetX = e.clientX - rect.left;
+  const offsetY = e.clientY - rect.top;
+
+  function onMove(ev: MouseEvent) {
+    dragPos.value = {
+      x: Math.max(0, Math.min(window.innerWidth - 200, ev.clientX - offsetX)),
+      y: Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - offsetY)),
+    };
+  }
+  function onUp() {
+    isDragging.value = false;
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+  }
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+}
 
 const canDeploy = computed(() => !!store.currentScenario);
 
@@ -59,6 +94,43 @@ async function handleExport() {
   }
 }
 
+function handleImportXml() {
+  fileInput.value?.click();
+}
+
+async function onFileSelected(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  // 重置 input，允许重复选同一文件
+  (event.target as HTMLInputElement).value = '';
+  try {
+    const content = await file.text();
+    const scenario = xmlParser.parse(content);
+    store.loadScenario(scenario);
+    showScenarioPreview.value = true;
+  } catch (err) {
+    store.error = `XML 导入失败: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+function handleExportXml() {
+  const scenario = store.currentScenario;
+  if (!scenario) return;
+  try {
+    const xmlContent = xmlExporter.export(scenario);
+    const blob = new Blob([xmlContent], { type: 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const name = scenario.scenarioMetadata?.name ?? scenario.id;
+    a.download = `${name}-${Date.now()}.xml`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    store.error = `XML 导出失败: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 // 检测思维链内容是否还在生成中
 function isThinking(msg: typeof store.chatHistory[0]) {
   return store.isGenerating && !msg.scenario && msg.content;
@@ -68,12 +140,46 @@ function isThinking(msg: typeof store.chatHistory[0]) {
 function isFinalMessage(msg: typeof store.chatHistory[0]) {
   return !!msg.scenario;
 }
+
+/**
+ * 过滤掉消息内容中的 JSON 部分，只展示战术分析文字
+ */
+function stripJsonFromContent(content: string): string {
+  let text = content;
+
+  // 剥离 qwen3 的 <think>...</think> 标签
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
+  // 移除 ```json ... ``` 代码块
+  text = text.replace(/```json[\s\S]*?```/g, '');
+  // 移除 ``` ... ``` 代码块（可能包含 JSON）
+  text = text.replace(/```[\s\S]*?```/g, '');
+
+  // 移除【方案详情】及之后的所有内容
+  const detailIndex = text.indexOf('【方案详情】');
+  if (detailIndex !== -1) {
+    text = text.substring(0, detailIndex);
+  }
+
+  // 移除独立的 JSON 对象（以 { 开头到匹配的 } 结束）
+  text = text.replace(/^\s*\{[\s\S]*\}\s*$/gm, '');
+
+  // 清理多余空行
+  text = text.replace(/\n{3,}/g, '\n\n').trim();
+
+  return text || '正在分析中...';
+}
 </script>
 
 <template>
-  <div class="ai-panel" :class="{ 'is-collapsed': isCollapsed }">
+  <div
+    ref="panelEl"
+    class="ai-panel"
+    :class="{ 'is-collapsed': isCollapsed, 'is-dragging': isDragging }"
+    :style="isCollapsed ? { right: 'auto', left: dragPos.x + 'px', top: dragPos.y + 'px' } : {}"
+  >
     <div class="panel-header">
-      <div class="panel-title">
+      <div class="panel-title" @mousedown="onDragStart" :style="isCollapsed ? { cursor: 'move' } : {}">
         <span class="panel-icon">🤖</span>
         <span>AI 战术助手</span>
       </div>
@@ -99,7 +205,7 @@ function isFinalMessage(msg: typeof store.chatHistory[0]) {
             <!-- 思维链消息 -->
             <template v-if="!msg.scenario">
               <div class="msg-role">🤔 战术分析</div>
-              <div class="thinking-content">{{ msg.content }}</div>
+              <div class="thinking-content">{{ stripJsonFromContent(msg.content) }}</div>
             </template>
 
             <!-- 最终方案消息 -->
@@ -157,6 +263,19 @@ function isFinalMessage(msg: typeof store.chatHistory[0]) {
           📄 导出 Word
         </button>
         <button
+          class="action-btn action-btn-secondary"
+          @click="handleImportXml"
+        >
+          📥 导入 XML
+        </button>
+        <button
+          class="action-btn action-btn-secondary"
+          :disabled="!canDeploy"
+          @click="handleExportXml"
+        >
+          📤 导出 XML
+        </button>
+        <button
           class="action-btn action-btn-danger"
           :disabled="!store.currentScenario"
           @click="store.clearMap()"
@@ -164,6 +283,14 @@ function isFinalMessage(msg: typeof store.chatHistory[0]) {
           🗑 清空地图
         </button>
       </div>
+
+      <input
+        ref="fileInput"
+        type="file"
+        accept=".xml,.txt"
+        style="display: none"
+        @change="onFileSelected"
+      />
 
       <div class="input-area">
         <textarea

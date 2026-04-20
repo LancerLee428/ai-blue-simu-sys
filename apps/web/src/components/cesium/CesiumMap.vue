@@ -8,7 +8,6 @@ import {
   setInitialView,
   flyToEntity,
   highlightEntity,
-  createTaiwanScenarioEntities,
   type ScenarioEntity,
 } from '../../services/cesium-graphics';
 
@@ -42,8 +41,8 @@ function upsertEntities() {
   if (!viewer.value) return;
   viewer.value.entities.removeAll();
 
-  // 如果没有实体，使用测试数据
-  const entitiesToRender = props.entities.length > 0 ? props.entities : createTaiwanScenarioEntities();
+  // 只渲染 AI 生成的方案实体，不使用测试数据
+  const entitiesToRender = props.entities;
 
   entitiesToRender.forEach((entity) => {
     const graphics = getEntityGraphics(entity);

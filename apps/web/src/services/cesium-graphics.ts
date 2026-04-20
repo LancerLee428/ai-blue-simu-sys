@@ -37,32 +37,52 @@ const STATUS_VISUALS = {
 export const FORCE_COLORS = {
   red: {
     primary: Cesium.Color.fromCssColorString('#ff4444'),
-    route: Cesium.Color.fromCssColorString('#ff6666'),
-    detectionFill: Cesium.Color.fromCssColorString('rgba(255,68,68,0.15)'),
-    detectionOutline: Cesium.Color.fromCssColorString('rgba(255,68,68,0.6)'),
+    route: Cesium.Color.fromCssColorString('#ff8888'),
+    detectionFill: Cesium.Color.fromCssColorString('rgba(255,68,68,0.12)'),
+    detectionOutline: Cesium.Color.fromCssColorString('rgba(255,100,100,0.5)'),
     attack: Cesium.Color.fromCssColorString('#ff0000'),
   },
   blue: {
     primary: Cesium.Color.fromCssColorString('#4488ff'),
-    route: Cesium.Color.fromCssColorString('#66aaff'),
-    detectionFill: Cesium.Color.fromCssColorString('rgba(68,136,255,0.15)'),
-    detectionOutline: Cesium.Color.fromCssColorString('rgba(68,136,255,0.6)'),
+    route: Cesium.Color.fromCssColorString('#88bbff'),
+    detectionFill: Cesium.Color.fromCssColorString('rgba(68,136,255,0.12)'),
+    detectionOutline: Cesium.Color.fromCssColorString('rgba(100,160,255,0.5)'),
     attack: Cesium.Color.fromCssColorString('#0066ff'),
   },
 } as const;
 
 /**
- * 实体类型到像素大小的映射
+ * 实体类型到像素大小的映射（历史保留，新渲染使用 entity-shape-icons）
  */
-export const ENTITY_SIZES: Record<PlatformType, number> = {
-  'aircraft-fighter': 14,
-  'aircraft-bomber': 18,
-  'aircraft-recon': 10,
-  'aircraft-helicopter': 12,
-  'ship': 16,
-  'ground-vehicle': 12,
-  'missile': 8,
-  'drone': 8,
+export const ENTITY_SIZES: Record<string, number> = {
+  'air-fighter': 14,
+  'air-multirole': 14,
+  'air-bomber': 18,
+  'air-recon': 10,
+  'helo-attack': 12,
+  'helo-transport': 12,
+  'uav-strike': 10,
+  'uav-recon': 8,
+  'uav-swarm': 10,
+  'ship-carrier': 22,
+  'ship-destroyer': 16,
+  'ship-frigate': 14,
+  'ship-submarine': 14,
+  'ship-amphibious': 16,
+  'ship-usv': 10,
+  'ground-tank': 12,
+  'ground-ifv': 10,
+  'ground-spg': 12,
+  'ground-mlrs': 12,
+  'ground-sam': 14,
+  'ground-radar': 14,
+  'ground-ew': 12,
+  'ground-hq': 14,
+  'facility-airbase': 18,
+  'facility-port': 16,
+  'facility-command': 16,
+  'facility-radar': 16,
+  'facility-target': 14,
 };
 
 /**

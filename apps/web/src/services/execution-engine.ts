@@ -24,32 +24,41 @@ function lerpPosition(from: GeoPosition, to: GeoPosition, t: number): GeoPositio
   };
 }
 
+/**
+ * 当前阶段每个实体的移动段：从 from → to，在 [0, durationMs] 内插值
+ */
+interface PhaseEntityMove {
+  entityId: string;
+  from: GeoPosition;
+  to: GeoPosition;
+  durationMs: number;
+}
+
 export class ExecutionEngine {
   private viewer: Cesium.Viewer;
   private renderer: MapRenderer;
   private scenario: TacticalScenario | null = null;
   private status: ExecutionStatus = 'idle';
   private currentPhaseIndex = 0;
-  private phaseStartTime = 0;
   private animationFrameId: number | null = null;
   private onPhaseComplete?: (phase: Phase) => void;
   private onEventTrigger?: (event: TacticalEvent) => void;
   private onStatusChange?: (status: ExecutionStatus) => void;
 
-  // 实体当前位置快照
+  // 实体当前位置快照（跨阶段持久保存）
   private entityPositions = new Map<string, GeoPosition>();
   private entityStatuses = new Map<string, string>();
 
-  // 每个实体的路线分段
-  private entityRouteSegments = new Map<string, { from: GeoPosition; to: GeoPosition; startMs: number; durationMs: number }[]>();
+  // 当前阶段的实体移动计划（每次进入新阶段时重建）
+  private currentPhaseMoves: PhaseEntityMove[] = [];
 
   // 防止同一相位内事件重复触发
   private firedEventsThisPhase = new Set<string>();
 
-  // Speed control
+  // 时间控制
   private speed: number = 1;
   private lastRealTime: number = 0;
-  private paused: boolean = false;
+  private virtualElapsedMs: number = 0; // 当前阶段内已过去的虚拟时间（ms）
 
   constructor(viewer: Cesium.Viewer, renderer: MapRenderer) {
     this.viewer = viewer;
@@ -60,6 +69,7 @@ export class ExecutionEngine {
     this.reset();
     this.scenario = scenario;
 
+    // 初始化实体位置为其原始部署位置
     scenario.forces.forEach((force) => {
       force.entities.forEach((entity) => {
         this.entityPositions.set(entity.id, { ...entity.position });
@@ -67,31 +77,15 @@ export class ExecutionEngine {
       });
     });
 
-    scenario.routes.forEach((route) => {
-      const segments: { from: GeoPosition; to: GeoPosition; startMs: number; durationMs: number }[] = [];
-      for (let i = 0; i < route.points.length - 1; i++) {
-        const from = route.points[i].position;
-        const to = route.points[i + 1].position;
-        const fromSec = route.points[i].timestamp ?? i * 60;
-        const toSec = route.points[i + 1].timestamp ?? (i + 1) * 60;
-        segments.push({
-          from,
-          to,
-          startMs: fromSec * 1000,
-          durationMs: Math.max(1, (toSec - fromSec) * 1000),
-        });
-      }
-      this.entityRouteSegments.set(route.entityId, segments);
-    });
-
     this.status = 'idle';
+    this.notifyStatusChange();
   }
 
   /**
    * 设置倍速
    */
   setSpeed(speed: number) {
-    this.speed = Math.max(0.1, Math.min(20, speed)); // 限制在 0.1x - 20x
+    this.speed = Math.max(0.1, Math.min(20, speed));
   }
 
   /**
@@ -102,65 +96,41 @@ export class ExecutionEngine {
   }
 
   /**
-   * 步进控制（前进或后退指定秒数）
+   * 播放
    */
-  step(deltaSeconds: number) {
-    this.paused = true;
-    const phase = this.scenario?.phases[this.currentPhaseIndex];
-    if (!phase) return;
+  play(): void {
+    if (!this.scenario || this.currentPhaseIndex >= this.scenario.phases.length) return;
 
-    const currentElapsed = (performance.now() - this.phaseStartTime) / 1000;
-    const newElapsed = Math.max(0, Math.min(phase.duration, currentElapsed + deltaSeconds));
-    this.phaseStartTime = performance.now() - (newElapsed * 1000);
+    if (this.status === 'completed') {
+      // 如果已完成，重新开始
+      this.virtualElapsedMs = 0;
+      this.currentPhaseIndex = 0;
+      this.firedEventsThisPhase.clear();
+      // 实体位置回到起始
+      this.scenario.forces.forEach((force) => {
+        force.entities.forEach((entity) => {
+          this.entityPositions.set(entity.id, { ...entity.position });
+        });
+      });
+    }
 
-    this.updateEntitiesToTime(newElapsed * 1000);
+    // 为当前阶段建立移动计划
+    this.buildPhaseMoves(this.currentPhaseIndex);
 
-    this.onEventTrigger?.({
-      type: 'movement',
-      timestamp: newElapsed,
-      sourceEntityId: '',
-      detail: `步进到 T+${newElapsed.toFixed(1)}秒`,
-    } as any);
+    this.status = 'running';
+    this.lastRealTime = performance.now();
+    this.notifyStatusChange();
+
+    if (this.animationFrameId === null) {
+      this.runAnimationLoop();
+    }
   }
 
   /**
-   * 更新实体到指定时间
+   * 暂停
    */
-  private updateEntitiesToTime(phaseElapsed: number) {
-    // 推进实体位置（线性插值）
-    this.entityRouteSegments.forEach((segments, entityId) => {
-      // Find the last segment that has started
-      let activeSegment: typeof segments[number] | null = null;
-      for (let i = segments.length - 1; i >= 0; i--) {
-        const seg = segments[i];
-        if (phaseElapsed >= seg.startMs) {
-          activeSegment = seg;
-          break;
-        }
-      }
-      if (activeSegment) {
-        const segElapsed = phaseElapsed - activeSegment.startMs;
-        const t = Math.max(0, Math.min(1, segElapsed / activeSegment.durationMs));
-        const newPos = lerpPosition(activeSegment.from, activeSegment.to, t);
-        this.entityPositions.set(entityId, newPos);
-        this.renderer.updateEntityPosition(entityId, newPos);
-      }
-    });
-  }
-
-  play(): void {
-    if (!this.scenario || this.currentPhaseIndex >= this.scenario.phases.length) return;
-    this.status = 'running';
-    this.paused = false;
-    this.lastRealTime = performance.now();
-    this.notifyStatusChange();
-    this.firedEventsThisPhase.clear();
-    this.runAnimationLoop();
-  }
-
   pause(): void {
     this.status = 'paused';
-    this.paused = true;
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -168,19 +138,47 @@ export class ExecutionEngine {
     this.notifyStatusChange();
   }
 
-  nextPhase(): void {
-    if (!this.scenario) return;
+  /**
+   * 停止并复位
+   */
+  stop(): void {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+
+    this.virtualElapsedMs = 0;
+    this.currentPhaseIndex = 0;
+    this.firedEventsThisPhase.clear();
+    this.status = 'idle';
+
+    // 将所有实体复位到初始位置
+    if (this.scenario) {
+      this.scenario.forces.forEach((force) => {
+        force.entities.forEach((entity) => {
+          this.entityPositions.set(entity.id, { ...entity.position });
+          this.renderer.updateEntityPosition(entity.id, entity.position);
+          this.renderer.updateEntityStatus(entity.id, 'deployed', force.side);
+        });
+      });
+    }
+
+    this.notifyStatusChange();
+  }
+
+  /**
+   * 下一阶段
+   */
+  nextPhase(): void {
+    if (!this.scenario) return;
     const phase = this.scenario.phases[this.currentPhaseIndex];
-    this.applyPhaseEntityStates(phase);
+    if (phase) this.applyPhaseEntityStates(phase);
+
     if (this.currentPhaseIndex < this.scenario.phases.length - 1) {
       this.currentPhaseIndex++;
-      this.phaseStartTime = performance.now();
+      this.virtualElapsedMs = 0;
+      this.firedEventsThisPhase.clear();
       this.onPhaseComplete?.(phase);
-      this.status = 'paused';
     } else {
       this.status = 'completed';
       this.onPhaseComplete?.(phase);
@@ -188,13 +186,29 @@ export class ExecutionEngine {
     this.notifyStatusChange();
   }
 
+  /**
+   * 上一阶段
+   */
   prevPhase(): void {
     if (!this.scenario || this.currentPhaseIndex <= 0) return;
     this.currentPhaseIndex--;
-    this.phaseStartTime = performance.now();
-    this.onPhaseComplete?.(this.scenario!.phases[this.currentPhaseIndex]);
-    this.status = 'paused';
+    this.virtualElapsedMs = 0;
+    this.firedEventsThisPhase.clear();
     this.notifyStatusChange();
+  }
+
+  /**
+   * 步进
+   */
+  step(deltaSeconds: number) {
+    const phase = this.scenario?.phases[this.currentPhaseIndex];
+    if (!phase) return;
+
+    this.virtualElapsedMs = Math.max(0, Math.min(
+      phase.duration * 1000,
+      this.virtualElapsedMs + deltaSeconds * 1000
+    ));
+    this.updateEntitiesToTime(this.virtualElapsedMs);
   }
 
   reset(): void {
@@ -205,16 +219,25 @@ export class ExecutionEngine {
     this.scenario = null;
     this.status = 'idle';
     this.currentPhaseIndex = 0;
+    this.virtualElapsedMs = 0;
     this.entityPositions.clear();
     this.entityStatuses.clear();
-    this.entityRouteSegments.clear();
+    this.currentPhaseMoves = [];
+    this.firedEventsThisPhase.clear();
     this.notifyStatusChange();
   }
 
-  getStatus(): { status: ExecutionStatus; currentPhaseIndex: number; totalPhases: number; currentPhase: Phase | null; progress: number; speed: number; currentTime: number } {
+  getStatus(): {
+    status: ExecutionStatus;
+    currentPhaseIndex: number;
+    totalPhases: number;
+    currentPhase: Phase | null;
+    progress: number;
+    speed: number;
+    currentTime: number;
+  } {
     const phase = this.scenario?.phases[this.currentPhaseIndex] ?? null;
-    const elapsed = performance.now() - this.phaseStartTime;
-    const progress = phase ? Math.min(1, elapsed / (phase.duration * 1000)) : 0;
+    const progress = phase ? Math.min(1, this.virtualElapsedMs / (phase.duration * 1000)) : 0;
     return {
       status: this.status,
       currentPhaseIndex: this.currentPhaseIndex,
@@ -222,7 +245,7 @@ export class ExecutionEngine {
       currentPhase: phase,
       progress,
       speed: this.speed,
-      currentTime: elapsed / 1000,
+      currentTime: this.virtualElapsedMs / 1000,
     };
   }
 
@@ -230,37 +253,84 @@ export class ExecutionEngine {
   setOnEventTrigger(cb: (event: TacticalEvent) => void) { this.onEventTrigger = cb; }
   setOnStatusChange(cb: (status: ExecutionStatus) => void) { this.onStatusChange = cb; }
 
-  private runAnimationLoop(): void {
-    if (this.status !== 'running' || this.paused) return;
-
-    const now = performance.now();
-    const realDelta = now - this.lastRealTime;
-    this.lastRealTime = now;
-
-    // Apply speed multiplier
-    const adjustedDelta = realDelta * this.speed;
-    const phaseElapsed = (now - this.phaseStartTime) + (adjustedDelta - realDelta);
-
-    const phase = this.scenario?.phases[this.currentPhaseIndex];
+  /**
+   * 为指定阶段建立移动计划：
+   * 从当前 entityPositions（上阶段末位置）→ 本阶段 entityStates 目标位置
+   */
+  private buildPhaseMoves(phaseIndex: number): void {
+    this.currentPhaseMoves = [];
+    const phase = this.scenario?.phases[phaseIndex];
     if (!phase) return;
 
-    // 推进实体位置（线性插值）
-    this.updateEntitiesToTime(phaseElapsed);
+    const phaseDurationMs = Math.max(1, phase.duration * 1000);
+
+    phase.entityStates.forEach((state) => {
+      const fromPos = this.entityPositions.get(state.entityId);
+      if (!fromPos) return;
+
+      // 如果起点和终点几乎一致，跳过（避免无意义移动）
+      const dx = Math.abs(state.position.longitude - fromPos.longitude);
+      const dy = Math.abs(state.position.latitude - fromPos.latitude);
+      const dz = Math.abs(state.position.altitude - fromPos.altitude);
+      if (dx < 1e-8 && dy < 1e-8 && dz < 1) return;
+
+      this.currentPhaseMoves.push({
+        entityId: state.entityId,
+        from: { ...fromPos },
+        to: { ...state.position },
+        durationMs: phaseDurationMs,
+      });
+    });
+  }
+
+  /**
+   * 更新实体到当前阶段内指定虚拟时间（阶段内相对时间）
+   */
+  private updateEntitiesToTime(virtualMs: number) {
+    this.currentPhaseMoves.forEach((move) => {
+      const t = Math.max(0, Math.min(1, virtualMs / move.durationMs));
+      const newPos = lerpPosition(move.from, move.to, t);
+      this.renderer.updateEntityPosition(move.entityId, newPos);
+    });
+  }
+
+  /**
+   * 动画主循环 — 用累计虚拟时间驱动，倍速直接影响时间推进速度
+   */
+  private runAnimationLoop(): void {
+    if (this.status !== 'running') {
+      this.animationFrameId = null;
+      return;
+    }
+
+    const now = performance.now();
+    const realDeltaMs = now - this.lastRealTime;
+    this.lastRealTime = now;
+
+    // 核心：累计虚拟时间 = 真实时间差 × 倍速
+    this.virtualElapsedMs += realDeltaMs * this.speed;
+
+    const phase = this.scenario?.phases[this.currentPhaseIndex];
+    if (!phase) {
+      this.animationFrameId = null;
+      return;
+    }
+
+    // 更新实体位置
+    this.updateEntitiesToTime(this.virtualElapsedMs);
 
     // 触发事件
-    phase.events.forEach((event) => {
+    phase.events.forEach((event, idx) => {
       const eventMs = event.timestamp * 1000;
-      const eventKey = `${phase.events.indexOf(event)}-${event.timestamp}`;
-      if (!this.firedEventsThisPhase.has(eventKey) && phaseElapsed >= eventMs && phaseElapsed < eventMs + 500) {
+      const eventKey = `${idx}-${event.timestamp}`;
+      if (!this.firedEventsThisPhase.has(eventKey) && this.virtualElapsedMs >= eventMs) {
         this.firedEventsThisPhase.add(eventKey);
         this.onEventTrigger?.(event);
         if (event.type === 'attack') {
-          const strikeId = `${event.sourceEntityId}-${event.targetEntityId}`;
-          this.renderer.triggerStrikeAnimation(strikeId);
+          this.renderer.triggerStrikeAnimation(event.sourceEntityId, event.targetEntityId ?? '');
         }
         if (event.type === 'destruction' && event.targetEntityId) {
           this.entityStatuses.set(event.targetEntityId, 'destroyed');
-          // 找到 side 更新样式
           if (this.scenario) {
             for (const force of this.scenario.forces) {
               const found = force.entities.find(e => e.id === event.targetEntityId);
@@ -274,18 +344,23 @@ export class ExecutionEngine {
       }
     });
 
-    // 检查阶段结束
-    if (phaseElapsed >= phase.duration * 1000) {
+    // 检查阶段是否结束
+    if (this.virtualElapsedMs >= phase.duration * 1000) {
+      // 阶段结束：将实体快照更新到阶段末位置，作为下一阶段起点
       this.applyPhaseEntityStates(phase);
+
       if (this.currentPhaseIndex < (this.scenario?.phases.length ?? 0) - 1) {
-        const prevPhase = phase;
         this.currentPhaseIndex++;
-        this.phaseStartTime = now;
-        this.onPhaseComplete?.(prevPhase);
+        this.virtualElapsedMs = 0;
+        this.firedEventsThisPhase.clear();
+        // 为下一阶段建立移动计划（从上阶段末位置出发）
+        this.buildPhaseMoves(this.currentPhaseIndex);
+        this.onPhaseComplete?.(phase);
       } else {
         this.status = 'completed';
         this.onPhaseComplete?.(phase);
         this.notifyStatusChange();
+        this.animationFrameId = null;
         return;
       }
     }
@@ -295,7 +370,8 @@ export class ExecutionEngine {
 
   private applyPhaseEntityStates(phase: Phase): void {
     phase.entityStates.forEach((state) => {
-      this.entityPositions.set(state.entityId, state.position);
+      // 持久化当前阶段末实体位置，作为下一阶段 buildPhaseMoves 的起点
+      this.entityPositions.set(state.entityId, { ...state.position });
       this.renderer.updateEntityPosition(state.entityId, state.position);
       if (state.status) {
         this.entityStatuses.set(state.entityId, state.status);

@@ -30,6 +30,7 @@ import type {
   KeplerianOrbit,
 } from '../types/tactical-scenario';
 import type { PlatformType, ForceSide } from '../types/tactical-scenario';
+import { keplerianToGeodetic } from './orbit-calculator';
 
 function getText(el: Element | null | undefined, selector: string): string {
   return el?.querySelector(selector)?.textContent?.trim() ?? '';
@@ -140,7 +141,9 @@ function parsePosition(equipEl: Element): GeoPosition {
       trueAnomaly: getFloat(initStateEl, 'TrueAnomaly'),
       epoch: getText(initStateEl, 'Epoch'),
     };
-    return { longitude: 0, latitude: 0, altitude: 0, orbit };
+    // 用开普勒根数计算 epoch 时刻的真实经纬高
+    const geodetic = keplerianToGeodetic(orbit, 0);
+    return { ...geodetic, orbit };
   }
 
   return { longitude: 0, latitude: 0, altitude: 0 };

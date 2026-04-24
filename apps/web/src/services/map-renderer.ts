@@ -11,8 +11,10 @@ import type {
 } from '../types/tactical-scenario';
 import { FORCE_COLORS, getEntityPixelSize } from './cesium-graphics';
 import { getEntityShapeCanvas } from './entity-shape-icons';
+import { getEntity3DModelCanvas } from './entity-3d-models';
 import { PLATFORM_META } from '../types/tactical-scenario';
 import { generateOrbitTrack } from './orbit-calculator';
+import { AiDecisionVisualizer, type RouteDecision } from './ai-decision-visualizer';
 
 /**
  * Cesium 地图渲染引擎
@@ -21,9 +23,21 @@ import { generateOrbitTrack } from './orbit-calculator';
 export class MapRenderer {
   private viewer: Cesium.Viewer;
   private entityIdSet = new Set<string>();
+  private decisionVisualizer = new AiDecisionVisualizer();
+  private routeDecisions = new Map<string, RouteDecision>();
+  private onRouteClick?: (routeId: string, decision: RouteDecision) => void;
 
   constructor(viewer: Cesium.Viewer) {
     this.viewer = viewer;
+    this.setupRouteClickHandler();
+  }
+
+  setOnRouteClick(callback: (routeId: string, decision: RouteDecision) => void) {
+    this.onRouteClick = callback;
+  }
+
+  getRouteDecisions(): Map<string, RouteDecision> {
+    return this.routeDecisions;
   }
 
   /**
@@ -33,12 +47,89 @@ export class MapRenderer {
     // 清除旧实体，避免 "already exists" 错误
     this.viewer.entities.removeAll();
     this.entityIdSet.clear();
+    this.routeDecisions.clear();
 
     this.renderEntities(scenario);
-    this.renderRoutes(scenario.routes);
+    this.renderRoutes(scenario);
     this.renderDetectionZones(scenario.detectionZones);
     this.renderStrikeTasks(scenario);
     this.renderOrbitTracks(scenario);
+  }
+
+  /**
+   * 渲染进攻路线（虚线 + 箭头，空中不贴地）+ AI 决策分析
+   */
+  private renderRoutes(scenario: TacticalScenario): void {
+    const routes = scenario.routes;
+    const allEntities = scenario.forces.flatMap(f => f.entities);
+    const detectionZones = scenario.detectionZones || [];
+
+    // 按 entityId 计数，支持同一实体多条路线（主攻/侧翼等）
+    const routeCountMap = new Map<string, number>();
+
+    routes.forEach((route) => {
+      if (route.points.length < 2) return;
+
+      // 找到路线对应的实体
+      const entity = allEntities.find(e => e.id === route.entityId);
+      if (!entity) return;
+
+      // 生成 AI 决策分析
+      const decision = this.decisionVisualizer.analyzeRouteDecision(
+        route,
+        entity,
+        allEntities,
+        detectionZones
+      );
+
+      // 生成唯一 ID
+      const idx = routeCountMap.get(route.entityId) ?? 0;
+      routeCountMap.set(route.entityId, idx + 1);
+      const routeId = `route-${route.entityId}-${idx}`;
+
+      // 保存决策数据
+      this.routeDecisions.set(routeId, decision);
+
+      const colors = FORCE_COLORS[route.side];
+      const positions = route.points.map((p) =>
+        Cesium.Cartesian3.fromDegrees(p.position.longitude, p.position.latitude, p.position.altitude)
+      );
+
+      // 路线不使用 clampToGround——飞机在空中飞行
+      const polylineEntity = this.viewer.entities.add({
+        id: routeId,
+        name: route.label || `路线-${route.entityId}`,
+        polyline: {
+          positions,
+          width: 2.5,
+          material: new Cesium.PolylineDashMaterialProperty({
+            color: colors.route.withAlpha(0.7),
+            dashLength: 12,
+          }),
+          clampToGround: false,
+          arcType: Cesium.ArcType.GEODESIC,
+        },
+      });
+      (polylineEntity as any).__tacticalLayer = true;
+      (polylineEntity as any).__routeDecision = decision;
+
+      // 末端箭头标记
+      if (positions.length >= 2) {
+        const arrowEntity = this.viewer.entities.add({
+          id: `${routeId}-arrow`,
+          name: '方向箭头',
+          position: positions[positions.length - 1],
+          point: {
+            pixelSize: 8,
+            color: colors.route,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 1,
+            heightReference: Cesium.HeightReference.NONE,
+          },
+        });
+        (arrowEntity as any).__tacticalLayer = true;
+      }
+    });
   }
 
   /**
@@ -57,13 +148,14 @@ export class MapRenderer {
   }
 
   /**
-   * 渲染实体（红蓝双方兵力）
+   * 渲染实体（红蓝双方兵力）- 使用精细 3D 模型
    */
   private renderEntities(scenario: TacticalScenario): void {
     scenario.forces.forEach((force) => {
       const colors = FORCE_COLORS[force.side];
       force.entities.forEach((entity) => {
-        const shapeCanvas = getEntityShapeCanvas(entity.type, force.side, 'deployed');
+        // 使用新的 3D 模型替代简单几何图形
+        const shapeCanvas = getEntity3DModelCanvas(entity.type, force.side, 'deployed');
         const imageUrl = shapeCanvas.toDataURL('image/png');
 
         // 空中力量高度兜底：如果 AI 生成了 altitude=0，用 PLATFORM_META.defaultAltitude
@@ -78,6 +170,12 @@ export class MapRenderer {
         const heightRef = hasAltitude
           ? Cesium.HeightReference.NONE
           : Cesium.HeightReference.CLAMP_TO_GROUND;
+
+        // P1 功能：根据航向旋转图标（0度=正北，顺时针）
+        // Cesium rotation: 0=正东，逆时针为正
+        // 转换公式: cesiumRotation = -(heading - 90) * PI/180
+        const heading = entity.position.heading ?? 0;
+        const rotation = Cesium.Math.toRadians(-(heading - 90));
 
         const cesiumEntity = this.viewer.entities.add({
           id: entity.id,
@@ -94,6 +192,8 @@ export class MapRenderer {
             heightReference: heightRef,
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            rotation: rotation,  // 图标旋转
+            alignedAxis: Cesium.Cartesian3.UNIT_Z,  // 绕 Z 轴旋转
           },
           label: {
             text: entity.name,
@@ -117,55 +217,33 @@ export class MapRenderer {
   }
 
   /**
-   * 渲染进攻路线（虚线 + 箭头，空中不贴地）
+   * 设置路线点击处理器
    */
-  private renderRoutes(routes: Route[]): void {
-    routes.forEach((route) => {
-      if (route.points.length < 2) return;
-      const colors = FORCE_COLORS[route.side];
-      const positions = route.points.map((p) =>
-        Cesium.Cartesian3.fromDegrees(p.position.longitude, p.position.latitude, p.position.altitude)
-      );
+  private setupRouteClickHandler(): void {
+    const handler = new Cesium.ScreenSpaceEventHandler(this.viewer.scene.canvas);
 
-      // 路线不使用 clampToGround——飞机在空中飞行
-      const polylineEntity = this.viewer.entities.add({
-        id: `route-${route.entityId}`,
-        name: route.label || `路线-${route.entityId}`,
-        polyline: {
-          positions,
-          width: 2.5,
-          material: new Cesium.PolylineDashMaterialProperty({
-            color: colors.route.withAlpha(0.7),
-            dashLength: 12,
-          }),
-          clampToGround: false,
-          arcType: Cesium.ArcType.GEODESIC,
-        },
-      });
-      (polylineEntity as any).__tacticalLayer = true;
+    handler.setInputAction((movement: any) => {
+      const pickedObject = this.viewer.scene.pick(movement.position);
+      if (Cesium.defined(pickedObject) && Cesium.defined(pickedObject.id)) {
+        const entityId = pickedObject.id.id;
 
-      // 末端箭头标记
-      if (positions.length >= 2) {
-        const arrowEntity = this.viewer.entities.add({
-          id: `route-arrow-${route.entityId}`,
-          name: '方向箭头',
-          position: positions[positions.length - 1],
-          point: {
-            pixelSize: 8,
-            color: colors.route,
-            outlineColor: Cesium.Color.WHITE,
-            outlineWidth: 1,
-            heightReference: Cesium.HeightReference.NONE,
-          },
-        });
-        (arrowEntity as any).__tacticalLayer = true;
+        // 检查是否点击了路线
+        if (entityId.startsWith('route-')) {
+          const decision = this.routeDecisions.get(entityId);
+          console.log('路线点击:', entityId, '决策数据:', decision);
+          if (decision && this.onRouteClick) {
+            this.onRouteClick(entityId, decision);
+          } else {
+            console.warn('未找到决策数据:', entityId, '可用决策:', Array.from(this.routeDecisions.keys()));
+          }
+        }
       }
-    });
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
   }
 
   /**
-   * 渲染探测范围（平滑 3D 半球，无网格线）
-   * 使用 Cesium EllipsoidGraphics 实现，与参考图风格一致
+   * 渲染探测范围（虚线边框 + 极淡填充，避免遮挡实体）
+   * P0 优化：减少视觉遮挡，突出实体图标
    */
   private renderDetectionZones(zones: DetectionZone[]): void {
     zones.forEach((zone) => {
@@ -176,7 +254,7 @@ export class MapRenderer {
       const R = zone.radiusMeters;
       const baseAlt = Math.max(0, zone.center.altitude ?? 0);
 
-      // 地面投影圆（表示水平探测范围）
+      // 地面投影圆（虚线边框 + 极淡填充）
       this.viewer.entities.add({
         id: `detection-ground-${zone.entityId}`,
         name: zone.label || '探测范围',
@@ -184,10 +262,10 @@ export class MapRenderer {
         ellipse: {
           semiMajorAxis: R,
           semiMinorAxis: R,
-          material: colors.detectionFill,
+          material: colors.detectionFill.withAlpha(0.03),  // 极淡填充，几乎透明
           outline: true,
-          outlineColor: colors.detectionOutline,
-          outlineWidth: 1.5,
+          outlineColor: colors.detectionOutline.withAlpha(0.6),
+          outlineWidth: 2,
           height: baseAlt,
           heightReference: baseAlt < 10
             ? Cesium.HeightReference.CLAMP_TO_GROUND
@@ -203,25 +281,23 @@ export class MapRenderer {
         },
       });
 
-      // 3D 半球体（平滑无网格线，向上延伸：地面→天空）
+      // 3D 半球体（仅边框轮廓，无填充）
       const hemiEntity = this.viewer.entities.add({
         id: `detection-hemi-${zone.entityId}`,
         name: '探测半球',
         position: Cesium.Cartesian3.fromDegrees(cx, cy, baseAlt),
         ellipsoid: {
-          // Cesium cone 角度：0=顶点(+Z)，PI/2=赤道平面，PI=底部(-Z)
-          // minimumCone=0, maximumCone=PI/2 → 朝上的半球（地面→天空）
           radii: new Cesium.Cartesian3(R, R, R),
           minimumCone: 0,
           maximumCone: Cesium.Math.PI_OVER_TWO,
           minimumClock: 0,
           maximumClock: Cesium.Math.TWO_PI,
-          fill: true,
-          material: colors.detectionFill.withAlpha(0.2),
-          outline: false,
-          slicePartitions: 128,
-          stackPartitions: 128,
-          subdivisions: 128,
+          fill: false,  // 关闭填充
+          outline: true,  // 仅显示轮廓线
+          outlineColor: colors.detectionOutline.withAlpha(0.4),
+          outlineWidth: 1,
+          slicePartitions: 24,  // 减少分段，形成虚线效果
+          stackPartitions: 12,
         },
       });
       (hemiEntity as any).__tacticalLayer = true;
@@ -348,7 +424,7 @@ export class MapRenderer {
   }
 
   /**
-   * 更新实体位置
+   * 更新实体位置（P1 功能：同时更新旋转角度）
    */
   updateEntityPosition(entityId: string, position: GeoPosition): void {
     const cesiumEntity = this.viewer.entities.getById(entityId);
@@ -358,11 +434,17 @@ export class MapRenderer {
         position.latitude,
         position.altitude
       );
+
+      // 如果有航向信息，更新图标旋转
+      if (position.heading !== undefined && cesiumEntity.billboard) {
+        const rotation = Cesium.Math.toRadians(-(position.heading - 90));
+        (cesiumEntity.billboard as any).rotation = rotation;
+      }
     }
   }
 
   /**
-   * 更新实体状态样式（重新生成对应状态的形状图标）
+   * 更新实体状态样式（重新生成对应状态的 3D 模型图标）
    */
   updateEntityStatus(entityId: string, status: EntityStatus, side: ForceSide): void {
     const cesiumEntity = this.viewer.entities.getById(entityId);
@@ -371,7 +453,8 @@ export class MapRenderer {
     const entityType = (cesiumEntity as any).__entityType as PlatformType;
     if (!entityType) return;
 
-    const shapeCanvas = getEntityShapeCanvas(entityType, side, status);
+    // 使用新的 3D 模型
+    const shapeCanvas = getEntity3DModelCanvas(entityType, side, status);
     const imageUrl = shapeCanvas.toDataURL('image/png');
 
     if (cesiumEntity.billboard) {

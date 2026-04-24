@@ -66,62 +66,65 @@ function initDragHandler() {
 
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.value.scene.canvas);
 
-  // 鼠标按下 - 检查是否点击了实体
-  handler.setInputAction((movement: any) => {
-    const pickedObject = viewer.value?.scene.pick(movement.position);
-    if (Cesium.defined(pickedObject) && Cesium.defined(pickedObject.id)) {
-      const entityId = pickedObject.id.id;
-      const entity = viewer.value?.entities.getById(entityId);
-      if (entity) {
-        draggingEntity.value = {
-          id: entityId,
-          startPosition: movement.position.clone(),
-        };
-        // 禁用相机控制器，防止拖拽时地图移动
-        viewer.value!.scene.screenSpaceCameraController.enableInputs = false;
-      }
-    }
-  }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+  // 拖拽功能已临时禁用 - 避免与地图拖拽冲突
+  // TODO: 未来可以通过按住特定键（如 Ctrl）来启用实体拖拽
 
-  // 鼠标移动 - 拖拽实体
-  handler.setInputAction((movement: any) => {
-    if (draggingEntity.value) {
-      const cartesian = viewer.value?.scene.camera.pickEllipsoid(
-        movement.endPosition,
-        viewer.value.scene.globe.ellipsoid
-      );
-      if (cartesian && draggingEntity.value) {
-        const entity = viewer.value?.entities.getById(draggingEntity.value.id);
-        if (entity) {
-          entity.position = cartesian;
-        }
-      }
-    }
-  }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+  // // 鼠标按下 - 检查是否点击了实体
+  // handler.setInputAction((movement: any) => {
+  //   const pickedObject = viewer.value?.scene.pick(movement.position);
+  //   if (Cesium.defined(pickedObject) && Cesium.defined(pickedObject.id)) {
+  //     const entityId = pickedObject.id.id;
+  //     const entity = viewer.value?.entities.getById(entityId);
+  //     if (entity) {
+  //       draggingEntity.value = {
+  //         id: entityId,
+  //         startPosition: movement.position.clone(),
+  //       };
+  //       // 禁用相机控制器，防止拖拽时地图移动
+  //       viewer.value!.scene.screenSpaceCameraController.enableInputs = false;
+  //     }
+  //   }
+  // }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
 
-  // 鼠标释放 - 结束拖拽
-  handler.setInputAction((movement: any) => {
-    if (draggingEntity.value) {
-      const cartesian = viewer.value?.scene.camera.pickEllipsoid(
-        movement.position,
-        viewer.value.scene.globe.ellipsoid
-      );
-      if (cartesian) {
-        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-        const longitude = Cesium.Math.toDegrees(cartographic.longitude);
-        const latitude = Cesium.Math.toDegrees(cartographic.latitude);
+  // // 鼠标移动 - 拖拽实体
+  // handler.setInputAction((movement: any) => {
+  //   if (draggingEntity.value) {
+  //     const cartesian = viewer.value?.scene.camera.pickEllipsoid(
+  //       movement.endPosition,
+  //       viewer.value.scene.globe.ellipsoid
+  //     );
+  //     if (cartesian && draggingEntity.value) {
+  //       const entity = viewer.value?.entities.getById(draggingEntity.value.id);
+  //       if (entity) {
+  //         entity.position = cartesian;
+  //       }
+  //     }
+  //   }
+  // }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-        emit('entityDragged', {
-          id: draggingEntity.value.id,
-          position: { longitude, latitude },
-        });
-      }
+  // // 鼠标释放 - 结束拖拽
+  // handler.setInputAction((movement: any) => {
+  //   if (draggingEntity.value) {
+  //     const cartesian = viewer.value?.scene.camera.pickEllipsoid(
+  //       movement.position,
+  //       viewer.value.scene.globe.ellipsoid
+  //     );
+  //     if (cartesian) {
+  //       const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+  //       const longitude = Cesium.Math.toDegrees(cartographic.longitude);
+  //       const latitude = Cesium.Math.toDegrees(cartographic.latitude);
 
-      draggingEntity.value = null;
-      // 重新启用相机控制器
-      viewer.value!.scene.screenSpaceCameraController.enableInputs = true;
-    }
-  }, Cesium.ScreenSpaceEventType.LEFT_UP);
+  //       emit('entityDragged', {
+  //         id: draggingEntity.value.id,
+  //         position: { longitude, latitude },
+  //       });
+  //     }
+
+  //     draggingEntity.value = null;
+  //     // 重新启用相机控制器
+  //     viewer.value!.scene.screenSpaceCameraController.enableInputs = true;
+  //   }
+  // }, Cesium.ScreenSpaceEventType.LEFT_UP);
 
   return handler;
 }

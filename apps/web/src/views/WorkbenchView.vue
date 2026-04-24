@@ -11,12 +11,13 @@ import MapModule from '../components/map/MapModule.vue';
 import LeftPanelModule from '../components/left-panel/LeftPanelModule.vue';
 import RightPanelModule from '../components/right-panel/RightPanelModule.vue';
 import DeploymentConfigModal from '../components/deployment/DeploymentConfigModal.vue';
-import AIAssistantPanel from '../components/ai-assistant/AIAssistantPanel.vue';
-import ActionPlanPanel from '../components/action-plan/ActionPlanPanel.vue';
+import LeftSidebar from '../components/left-sidebar/LeftSidebar.vue';
+import DecisionPanel from '../components/simulation/DecisionPanel.vue';
 import { MapRenderer } from '../services/map-renderer';
 import { ExecutionEngine } from '../services/execution-engine';
 import { useTacticalScenarioStore } from '../stores/tactical-scenario';
 import { useActionPlanStore } from '../stores/action-plan';
+import type { RouteDecision } from '../services/ai-decision-visualizer';
 
 const store = usePlatformStore();
 const tacticalStore = useTacticalScenarioStore();
@@ -24,9 +25,14 @@ const actionPlanStore = useActionPlanStore();
 const { entities, createEntity, updateEntity, deleteEntity } = useEntityState();
 const { execute, undo, redo, canUndo, canRedo } = useCommandSystem();
 
-// ExecutionEngine and ActionPlanPanel refs
-const actionPlanPanelRef = ref<InstanceType<typeof ActionPlanPanel> | null>(null);
+// ExecutionEngine and LeftSidebar refs
+const leftSidebarRef = ref<InstanceType<typeof LeftSidebar> | null>(null);
 const executionEngineRef = ref<typeof ExecutionEngine | null>(null);
+const mapRendererRef = ref<MapRenderer | null>(null);
+
+// 决策面板状态
+const selectedRouteId = ref<string | null>(null);
+const routeDecisions = ref<Map<string, RouteDecision>>(new Map());
 
 // 组件卸载时清理
 onUnmounted(() => {
@@ -35,8 +41,8 @@ onUnmounted(() => {
     executionEngineRef.value.pause();
     executionEngineRef.value = null;
   }
-  if (actionPlanPanelRef.value) {
-    actionPlanPanelRef.value = null;
+  if (leftSidebarRef.value) {
+    leftSidebarRef.value = null;
   }
 });
 
@@ -70,13 +76,46 @@ function handleViewerReady(viewer: Cesium.Viewer) {
 
   // 保存引用以便清理
   executionEngineRef.value = engine;
+  mapRendererRef.value = renderer;
 
   tacticalStore.initEngine(engine, renderer);
 
-  // 注入 ExecutionEngine 到 ActionPlanPanel
-  if (actionPlanPanelRef.value) {
-    actionPlanPanelRef.value.initEngine(engine);
+  // 注入 ExecutionEngine 到 LeftSidebar
+  if (leftSidebarRef.value) {
+    leftSidebarRef.value.initEngine(engine);
   }
+
+  // 设置路线点击回调
+  renderer.setOnRouteClick((routeId: string, decision: RouteDecision) => {
+    selectedRouteId.value = routeId;
+    routeDecisions.value = renderer.getRouteDecisions();
+
+    // 同步到 LeftSidebar
+    if (leftSidebarRef.value) {
+      leftSidebarRef.value.setRouteDecisions(routeDecisions.value);
+    }
+  });
+
+  // 初始化时同步路线决策数据
+  if (leftSidebarRef.value) {
+    leftSidebarRef.value.setRouteDecisions(renderer.getRouteDecisions());
+  }
+
+  // 设置状态变化回调 - 同步到 ActionPlan Store
+  engine.setOnStatusChange((status) => {
+    const activePlanId = actionPlanStore.activePlanId;
+    if (activePlanId) {
+      actionPlanStore.updateExecutionState(activePlanId, { status });
+    }
+  });
+
+  // 设置进度更新回调 - 节流 100ms（在 RAF 中实现）
+  engine.setOnProgressUpdate(({ currentTime, progress, currentPhaseIndex }) => {
+    const activePlanId = actionPlanStore.activePlanId;
+    if (activePlanId) {
+      actionPlanStore.updateExecutionState(activePlanId, { currentTime });
+    }
+  });
 }
 
 /**
@@ -189,13 +228,16 @@ const scenarioEntities = computed(() => {
     />
 
     <!-- Left panel: action plan management -->
-    <ActionPlanPanel ref="actionPlanPanelRef" />
+    <LeftSidebar ref="leftSidebarRef" />
 
     <!-- Right panel: AI assistant + resource tree -->
     <RightPanelModule />
 
-    <!-- AI Tactical Assistant Panel -->
-    <AIAssistantPanel />
+    <!-- AI Decision Panel -->
+    <DecisionPanel
+      :selected-route-id="selectedRouteId"
+      :decisions="routeDecisions"
+    />
 
     <!-- 部署配置弹窗 -->
     <DeploymentConfigModal

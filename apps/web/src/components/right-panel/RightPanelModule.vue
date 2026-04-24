@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { usePanelState, type RightPanelTab } from '../../composables/usePanelState';
-import AIAssistantModule from './AIAssistantModule.vue';
+import AIAssistantPanel from '../ai-assistant/AIAssistantPanel.vue';
 import ResourceTreeModule from './ResourceTreeModule.vue';
 
 const {
@@ -38,8 +38,8 @@ function switchTab(tab: RightPanelTab) {
         <button class="close-btn" @click="closeRightPanel">✕</button>
       </div>
 
-      <div class="panel-scroll">
-        <AIAssistantModule v-if="rightPanelActiveTab === 'ai'" />
+      <div class="panel-body">
+        <AIAssistantPanel v-if="rightPanelActiveTab === 'ai'" />
         <ResourceTreeModule v-else />
       </div>
     </aside>
@@ -69,14 +69,14 @@ function switchTab(tab: RightPanelTab) {
   border-bottom: 1px solid rgba(142, 164, 201, 0.15);
 }
 
-.panel-scroll {
+/* 面板主体：填满剩余空间，AI 面板内部自行管理滚动 */
+.panel-body {
   flex: 1;
-  overflow-y: auto;
-  padding: 16px;
   min-height: 0;
-  background: rgba(4, 11, 20, 0.3);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: rgba(4, 11, 20, 0.3);
 }
 
 .close-btn {

@@ -30,6 +30,7 @@ export interface GeoPosition {
   longitude: number;
   latitude: number;
   altitude: number;
+  heading?: number;    // 航向角（度，0=正北，顺时针）
   orbit?: OrbitState;  // 轨道参数（航天装备使用）
 }
 

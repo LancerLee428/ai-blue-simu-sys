@@ -33,6 +33,7 @@ export class RouteGenerator {
       startEntity.position,
       targetEntity.position,
       intent.approach,
+      startEntity.type,  // 传入实体类型用于高度约束
     );
 
     return {
@@ -76,14 +77,18 @@ export class RouteGenerator {
   }
 
   /**
-   * 在两点间插值生成航路点
+   * 在两点间插值生成航路点（带高度约束）
    */
   private interpolateRoute(
     start: GeoPosition,
     end: GeoPosition,
     approach: string,
+    entityType: string,
   ): RoutePoint[] {
     const points: RoutePoint[] = [];
+
+    // 根据实体类型确定合适的巡航高度
+    const cruiseAltitude = this.getCruiseAltitude(entityType, start.altitude);
 
     // 起点
     points.push({ position: { ...start } });
@@ -101,21 +106,21 @@ export class RouteGenerator {
           position: {
             longitude: start.longitude + dLon * 0.3,
             latitude: start.latitude + dLat * 0.3 + offset,
-            altitude: start.altitude,
+            altitude: cruiseAltitude,
           },
         });
         points.push({
           position: {
             longitude: midLon,
             latitude: midLat + offset * 1.2,
-            altitude: start.altitude,
+            altitude: cruiseAltitude,
           },
         });
         points.push({
           position: {
             longitude: start.longitude + dLon * 0.7,
             latitude: start.latitude + dLat * 0.7 + offset * 0.6,
-            altitude: start.altitude,
+            altitude: cruiseAltitude,
           },
         });
         break;
@@ -127,71 +132,125 @@ export class RouteGenerator {
           position: {
             longitude: start.longitude + dLon * 0.3,
             latitude: start.latitude + dLat * 0.3 - offset,
-            altitude: start.altitude,
+            altitude: cruiseAltitude,
           },
         });
         points.push({
           position: {
             longitude: midLon,
             latitude: midLat - offset * 1.2,
-            altitude: start.altitude,
+            altitude: cruiseAltitude,
           },
         });
         points.push({
           position: {
             longitude: start.longitude + dLon * 0.7,
             latitude: start.latitude + dLat * 0.7 - offset * 0.6,
-            altitude: start.altitude,
+            altitude: cruiseAltitude,
           },
         });
         break;
       }
       case 'low-altitude': {
-        // 低空突防：多个中间点，高度逐渐降低
-        const lowAlt = 200; // 200m 超低空
+        // 低空突防：多个中间点，高度逐渐降低（但不能贴地）
+        const minAltitude = this.getMinAltitude(entityType);
         points.push({
           position: {
             longitude: start.longitude + dLon * 0.25,
             latitude: start.latitude + dLat * 0.25,
-            altitude: start.altitude * 0.5,
+            altitude: cruiseAltitude * 0.7,
           },
         });
         points.push({
           position: {
-            longitude: start.longitude + dLon * 0.5,
-            latitude: start.latitude + dLat * 0.5,
-            altitude: lowAlt,
+            longitude: midLon,
+            latitude: midLat,
+            altitude: Math.max(minAltitude, cruiseAltitude * 0.4),
           },
         });
         points.push({
           position: {
             longitude: start.longitude + dLon * 0.75,
             latitude: start.latitude + dLat * 0.75,
-            altitude: lowAlt,
+            altitude: Math.max(minAltitude, cruiseAltitude * 0.5),
           },
         });
         break;
       }
       default: {
-        // direct：大圆航线，3 个等距中间点
-        for (let i = 1; i <= 3; i++) {
-          const t = i / 4;
-          points.push({
-            position: {
-              longitude: start.longitude + dLon * t,
-              latitude: start.latitude + dLat * t,
-              altitude: start.altitude + (end.altitude - start.altitude) * t,
-            },
-          });
-        }
-        break;
+        // 直线进攻：简单插值
+        points.push({
+          position: {
+            longitude: start.longitude + dLon * 0.33,
+            latitude: start.latitude + dLat * 0.33,
+            altitude: cruiseAltitude,
+          },
+        });
+        points.push({
+          position: {
+            longitude: start.longitude + dLon * 0.67,
+            latitude: start.latitude + dLat * 0.67,
+            altitude: cruiseAltitude,
+          },
+        });
       }
     }
 
-    // 终点（目标位置）
+    // 终点
     points.push({ position: { ...end } });
 
     return points;
+  }
+
+  /**
+   * 根据实体类型获取巡航高度
+   */
+  private getCruiseAltitude(entityType: string, startAltitude: number): number {
+    // 空中平台
+    if (entityType.startsWith('air-fighter') || entityType.startsWith('air-multirole')) {
+      return Math.max(8000, startAltitude);
+    }
+    if (entityType.startsWith('air-bomber') || entityType.startsWith('air-aew')) {
+      return Math.max(10000, startAltitude);
+    }
+    if (entityType.startsWith('air-recon')) {
+      return Math.max(12000, startAltitude);
+    }
+    if (entityType.startsWith('helo-')) {
+      return Math.max(500, startAltitude);
+    }
+    if (entityType.startsWith('uav-')) {
+      return Math.max(3000, startAltitude);
+    }
+
+    // 海面舰艇必须在水面
+    if (entityType.startsWith('ship-') && !entityType.includes('submarine')) {
+      return 0;
+    }
+
+    // 潜艇在水下
+    if (entityType.includes('submarine')) {
+      return Math.min(-50, startAltitude);
+    }
+
+    // 地面单位
+    return 0;
+  }
+
+  /**
+   * 根据实体类型获取最低安全高度
+   */
+  private getMinAltitude(entityType: string): number {
+    if (entityType.startsWith('air-')) {
+      return 1000; // 飞机最低 1000m
+    }
+    if (entityType.startsWith('helo-')) {
+      return 200; // 直升机最低 200m
+    }
+    if (entityType.startsWith('uav-')) {
+      return 500; // 无人机最低 500m
+    }
+    return 0;
   }
 
   private findEntity(scenario: TacticalScenario, entityId: string): EntitySpec | null {

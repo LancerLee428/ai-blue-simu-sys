@@ -89,59 +89,37 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
       timestamp: Date.now(),
     });
 
-    const MAX_RETRIES = 2;
-
     try {
       const service = ensureAiService();
 
+      // 流式生成（单次，验证警告不阻断）
       let finalScenario: TacticalScenario | null = null;
-      let lastValidationErrors = '';
 
-      // 首次生成 + 最多 MAX_RETRIES 次自动修正
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const isRetry = attempt > 0;
-        const currentIntent = isRetry
-          ? `上一次生成的方案存在以下问题，请修正：\n${lastValidationErrors}\n\n原始需求：${userIntent}`
-          : userIntent;
-
-        if (isRetry) {
-          addSystemMessage(`验证未通过，自动修正中 (${attempt}/${MAX_RETRIES})...`);
+      const streamGen = service.generateScenarioStream(userIntent, (text) => {
+        thinkingChain.value += text;
+        const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
+        if (msgIndex !== -1) {
+          chatHistory.value[msgIndex].content = thinkingChain.value;
         }
+      });
 
-        // 使用流式生成
-        const streamGen = service.generateScenarioStream(currentIntent, (text) => {
-          thinkingChain.value += text;
-          const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
-          if (msgIndex !== -1) {
-            chatHistory.value[msgIndex].content = thinkingChain.value;
-          }
-        });
+      // 消费流并获取最终结果
+      let result = await streamGen.next();
+      while (!result.done) {
+        result = await streamGen.next();
+      }
+      finalScenario = result.value;
 
-        // 消费流并获取最终结果
-        let result = await streamGen.next();
-        while (!result.done) {
-          result = await streamGen.next();
-        }
-        finalScenario = result.value;
+      if (!finalScenario) {
+        throw new Error('方案生成失败');
+      }
 
-        if (!finalScenario) {
-          throw new Error('方案生成失败');
-        }
-
-        // 执行战术验证
-        const validationResult = validator.validate(finalScenario);
-        if (validationResult.valid) {
-          break; // 验证通过，跳出循环
-        }
-
-        lastValidationErrors = validationResult.errors.map(e => e.message).join('\n');
-
-        if (attempt === MAX_RETRIES) {
-          // 最后一次重试仍失败: 记录警告但不阻塞，使用当前方案
-          console.warn(`[战术验证] ${MAX_RETRIES} 次重试后仍有问题:\n${lastValidationErrors}`);
-          addSystemMessage(`⚠️ 方案存在部分约束问题（已尝试 ${MAX_RETRIES} 次修正）:\n${lastValidationErrors}`);
-          // 不再 throw，使用当前方案继续
-        }
+      // 执行战术验证（仅展示警告，不阻断方案）
+      const validationResult = validator.validate(finalScenario);
+      if (!validationResult.valid) {
+        const warnings = validationResult.errors.map(e => e.message).join('\n');
+        console.warn(`[战术验证] 方案存在约束问题:\n${warnings}`);
+        addSystemMessage(`⚠️ 方案存在部分约束问题（可继续使用）:\n${warnings}`);
       }
 
       if (!finalScenario) {

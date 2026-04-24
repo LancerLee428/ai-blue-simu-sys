@@ -270,9 +270,7 @@ export class TacticalValidator {
     if (!scenario.forces || scenario.forces.length === 0) {
       errors.push({ type: 'completeness', message: '方案缺少兵力编成' });
     }
-    if (!scenario.phases || scenario.phases.length === 0) {
-      errors.push({ type: 'completeness', message: '方案缺少阶段划分' });
-    }
+    // phases 为可选字段，新型仿真想定（卫星/装备鉴定）可以不包含阶段划分
 
     return errors;
   }

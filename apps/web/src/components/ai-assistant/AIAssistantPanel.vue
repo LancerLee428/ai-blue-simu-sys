@@ -1,6 +1,6 @@
 <!-- apps/web/src/components/ai-assistant/AIAssistantPanel.vue -->
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue';
+import { ref, watch, nextTick } from 'vue';
 import { useTacticalScenarioStore } from '../../stores/tactical-scenario';
 import { XmlScenarioParser } from '../../services/xml-scenario-parser';
 import { XmlScenarioExporter } from '../../services/xml-scenario-exporter';
@@ -9,44 +9,12 @@ import ScenarioPreview from './ScenarioPreview.vue';
 
 const store = useTacticalScenarioStore();
 const inputText = ref('');
-const isCollapsed = ref(false);
 const showScenarioPreview = ref(false);
 const chatHistoryEl = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const xmlParser = new XmlScenarioParser();
 const xmlExporter = new XmlScenarioExporter();
-
-// 拖拽状态
-const panelEl = ref<HTMLElement | null>(null);
-const dragPos = ref({ x: 0, y: 0 });
-const isDragging = ref(false);
-
-function onDragStart(e: MouseEvent) {
-  if (!isCollapsed.value) return;
-  isDragging.value = true;
-  const el = panelEl.value;
-  if (!el) return;
-  const rect = el.getBoundingClientRect();
-  const offsetX = e.clientX - rect.left;
-  const offsetY = e.clientY - rect.top;
-
-  function onMove(ev: MouseEvent) {
-    dragPos.value = {
-      x: Math.max(0, Math.min(window.innerWidth - 200, ev.clientX - offsetX)),
-      y: Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - offsetY)),
-    };
-  }
-  function onUp() {
-    isDragging.value = false;
-    window.removeEventListener('mousemove', onMove);
-    window.removeEventListener('mouseup', onUp);
-  }
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
-}
-
-const canDeploy = computed(() => !!store.currentScenario);
 
 // 自动滚动到底部
 watch(() => store.chatHistory.length, async () => {
@@ -101,7 +69,6 @@ function handleImportXml() {
 async function onFileSelected(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
-  // 重置 input，允许重复选同一文件
   (event.target as HTMLInputElement).value = '';
   try {
     const content = await file.text();
@@ -129,16 +96,6 @@ function handleExportXml() {
   } catch (err) {
     store.error = `XML 导出失败: ${err instanceof Error ? err.message : String(err)}`;
   }
-}
-
-// 检测思维链内容是否还在生成中
-function isThinking(msg: typeof store.chatHistory[0]) {
-  return store.isGenerating && !msg.scenario && msg.content;
-}
-
-// 检测是否是最终消息（包含方案）
-function isFinalMessage(msg: typeof store.chatHistory[0]) {
-  return !!msg.scenario;
 }
 
 /**
@@ -172,199 +129,143 @@ function stripJsonFromContent(content: string): string {
 </script>
 
 <template>
-  <div
-    ref="panelEl"
-    class="ai-panel"
-    :class="{ 'is-collapsed': isCollapsed, 'is-dragging': isDragging }"
-    :style="isCollapsed ? { right: 'auto', left: dragPos.x + 'px', top: dragPos.y + 'px' } : {}"
-  >
-    <div class="panel-header">
-      <div class="panel-title" @mousedown="onDragStart" :style="isCollapsed ? { cursor: 'move' } : {}">
-        <span class="panel-icon">🤖</span>
-        <span>AI 战术助手</span>
+  <div class="ai-panel">
+    <div class="chat-history" ref="chatHistoryEl">
+      <div
+        v-for="msg in store.chatHistory"
+        :key="msg.id"
+        class="chat-msg"
+        :class="getMsgClass(msg.role)"
+      >
+        <template v-if="msg.role === 'user'">
+          <div class="msg-role">我</div>
+          <div class="msg-content">{{ msg.content }}</div>
+        </template>
+
+        <template v-else>
+          <!-- 思维链消息 -->
+          <template v-if="!msg.scenario">
+            <div class="msg-role">🤔 战术分析</div>
+            <div class="thinking-content">{{ stripJsonFromContent(msg.content) }}</div>
+          </template>
+
+          <!-- 最终方案消息 -->
+          <template v-else>
+            <div class="msg-role">📋 战术方案</div>
+            <div class="msg-content">{{ msg.content }}</div>
+
+            <template v-if="msg === store.chatHistory[store.chatHistory.length - 1]">
+              <button class="preview-toggle" @click="showScenarioPreview = !showScenarioPreview">
+                {{ showScenarioPreview ? '隐藏' : '显示' }}方案详情
+              </button>
+              <ScenarioPreview v-if="showScenarioPreview" :scenario="msg.scenario" />
+            </template>
+          </template>
+        </template>
       </div>
-      <button class="icon-btn" @click="isCollapsed = !isCollapsed">
-        {{ isCollapsed ? '□' : '−' }}
+
+      <!-- 正在生成中的加载指示器 -->
+      <div v-if="store.isGenerating && !store.thinkingChain" class="chat-msg msg-assistant">
+        <div class="msg-role">AI</div>
+        <div class="msg-content generating">
+          <span>正在生成战术方案</span>
+          <span class="dots">...</span>
+        </div>
+      </div>
+
+      <div v-if="store.error" class="chat-error">{{ store.error }}</div>
+    </div>
+
+    <PhaseTimeline
+      v-if="store.currentScenario"
+      :phases="store.currentScenario.phases"
+      :current-phase-index="store.currentPhaseIndex"
+      :execution-status="store.executionStatus"
+      @execute="store.play()"
+      @pause="store.pause()"
+      @next="store.nextPhase()"
+      @prev="store.prevPhase()"
+      @reset="store.reset()"
+    />
+
+    <div class="panel-actions-row">
+      <button
+        class="action-btn action-btn-primary"
+        :disabled="!store.currentScenario"
+        @click="store.deployToMap()"
+      >
+        📍 部署
+      </button>
+      <button
+        class="action-btn action-btn-secondary"
+        :disabled="!store.currentScenario"
+        @click="handleExport"
+      >
+        📄 Word
+      </button>
+      <button
+        class="action-btn action-btn-secondary"
+        @click="handleImportXml"
+      >
+        📥 导入
+      </button>
+      <button
+        class="action-btn action-btn-secondary"
+        :disabled="!store.currentScenario"
+        @click="handleExportXml"
+      >
+        📤 导出
+      </button>
+      <button
+        class="action-btn action-btn-danger"
+        :disabled="!store.currentScenario"
+        @click="store.clearMap()"
+      >
+        🗑 清空
       </button>
     </div>
 
-    <template v-if="!isCollapsed">
-      <div class="chat-history" ref="chatHistoryEl">
-        <div
-          v-for="msg in store.chatHistory"
-          :key="msg.id"
-          class="chat-msg"
-          :class="getMsgClass(msg.role)"
-        >
-          <template v-if="msg.role === 'user'">
-            <div class="msg-role">我</div>
-            <div class="msg-content">{{ msg.content }}</div>
-          </template>
+    <input
+      ref="fileInput"
+      type="file"
+      accept=".xml,.txt"
+      style="display: none"
+      @change="onFileSelected"
+    />
 
-          <template v-else>
-            <!-- 思维链消息 -->
-            <template v-if="!msg.scenario">
-              <div class="msg-role">🤔 战术分析</div>
-              <div class="thinking-content">{{ stripJsonFromContent(msg.content) }}</div>
-            </template>
-
-            <!-- 最终方案消息 -->
-            <template v-else>
-              <div class="msg-role">📋 战术方案</div>
-              <div class="msg-content">{{ msg.content }}</div>
-
-              <template v-if="msg === store.chatHistory[store.chatHistory.length - 1]">
-                <button class="preview-toggle" @click="showScenarioPreview = !showScenarioPreview">
-                  {{ showScenarioPreview ? '隐藏' : '显示' }}方案详情
-                </button>
-                <ScenarioPreview v-if="showScenarioPreview" :scenario="msg.scenario" />
-              </template>
-            </template>
-          </template>
-        </div>
-
-        <!-- 正在生成中的加载指示器 -->
-        <div v-if="store.isGenerating && !store.thinkingChain" class="chat-msg msg-assistant">
-          <div class="msg-role">AI</div>
-          <div class="msg-content generating">
-            <span>正在生成战术方案</span>
-            <span class="dots">...</span>
-          </div>
-        </div>
-
-        <div v-if="store.error" class="chat-error">{{ store.error }}</div>
-      </div>
-
-      <PhaseTimeline
-        v-if="store.currentScenario"
-        :phases="store.currentScenario.phases"
-        :current-phase-index="store.currentPhaseIndex"
-        :execution-status="store.executionStatus"
-        @execute="store.play()"
-        @pause="store.pause()"
-        @next="store.nextPhase()"
-        @prev="store.prevPhase()"
-        @reset="store.reset()"
+    <div class="input-area">
+      <textarea
+        v-model="inputText"
+        class="input-field"
+        :placeholder="store.currentScenario
+          ? '补充或修改方案...'
+          : '描述你的战术意图，如：在台湾北部部署蓝方防御力量，阻止红方从东侧突防...'"
+        rows="3"
+        @keydown="handleKeydown"
       />
-
-      <div class="panel-actions-row">
+      <div class="input-footer">
         <button
-          class="action-btn action-btn-primary"
-          :disabled="!canDeploy"
-          @click="store.deployToMap()"
+          class="send-btn"
+          :disabled="!inputText.trim() || store.isGenerating"
+          @click="store.currentScenario ? handleRefine() : handleSend()"
         >
-          📍 部署到地图
-        </button>
-        <button
-          class="action-btn action-btn-secondary"
-          :disabled="!canDeploy"
-          @click="handleExport"
-        >
-          📄 导出 Word
-        </button>
-        <button
-          class="action-btn action-btn-secondary"
-          @click="handleImportXml"
-        >
-          📥 导入 XML
-        </button>
-        <button
-          class="action-btn action-btn-secondary"
-          :disabled="!canDeploy"
-          @click="handleExportXml"
-        >
-          📤 导出 XML
-        </button>
-        <button
-          class="action-btn action-btn-danger"
-          :disabled="!store.currentScenario"
-          @click="store.clearMap()"
-        >
-          🗑 清空地图
+          {{ store.currentScenario
+            ? (store.isGenerating ? '生成中...' : '修正方案')
+            : (store.isGenerating ? '生成中...' : '发送') }}
         </button>
       </div>
-
-      <input
-        ref="fileInput"
-        type="file"
-        accept=".xml,.txt"
-        style="display: none"
-        @change="onFileSelected"
-      />
-
-      <div class="input-area">
-        <textarea
-          v-model="inputText"
-          class="input-field"
-          :placeholder="store.currentScenario
-            ? '补充或修改方案...'
-            : '描述你的战术意图，如：在台湾北部部署蓝方防御力量，阻止红方从东侧突防...'"
-          rows="3"
-          @keydown="handleKeydown"
-        />
-        <div class="input-footer">
-          <button
-            class="send-btn"
-            :disabled="!inputText.trim() || store.isGenerating"
-            @click="store.currentScenario ? handleRefine() : handleSend()"
-          >
-            {{ store.currentScenario
-              ? (store.isGenerating ? '生成中...' : '修正方案')
-              : (store.isGenerating ? '生成中...' : '发送') }}
-          </button>
-        </div>
-      </div>
-    </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .ai-panel {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 380px;
   display: flex;
   flex-direction: column;
-  background: rgba(4, 11, 20, 0.96);
-  border-left: 1px solid rgba(107, 196, 255, 0.25);
+  height: 100%;
   overflow: hidden;
-  z-index: 500;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
 }
-.ai-panel.is-collapsed {
-  width: auto;
-  height: auto;
-  bottom: auto;
-}
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(107, 196, 255, 0.15);
-  flex-shrink: 0;
-}
-.panel-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #e2ebfb;
-}
-.panel-icon { font-size: 16px; }
-.icon-btn {
-  background: none;
-  border: none;
-  color: #6bc4ff;
-  cursor: pointer;
-  font-size: 16px;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-.icon-btn:hover { background: rgba(107, 196, 255, 0.1); }
+
 .chat-history {
   flex: 1;
   overflow-y: auto;
@@ -372,8 +273,11 @@ function stripJsonFromContent(content: string): string {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
+
 .chat-msg { display: flex; flex-direction: column; gap: 4px; }
+
 .msg-role {
   font-size: 10px;
   font-weight: 600;
@@ -442,23 +346,29 @@ function stripJsonFromContent(content: string): string {
   border-radius: 6px;
   border: 1px solid rgba(255, 68, 68, 0.3);
 }
+
 .panel-actions-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   padding: 8px 12px;
   flex-shrink: 0;
   border-top: 1px solid rgba(107, 196, 255, 0.1);
+  flex-wrap: wrap;
 }
 .action-btn {
   flex: 1;
-  padding: 8px;
+  min-width: 0;
+  padding: 7px 4px;
   border-radius: 6px;
   border: 1px solid rgba(107, 196, 255, 0.25);
   background: rgba(107, 196, 255, 0.08);
   color: #6bc4ff;
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .action-btn:hover:not(:disabled) { background: rgba(107, 196, 255, 0.18); }
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -477,6 +387,7 @@ function stripJsonFromContent(content: string): string {
   border-color: rgba(255, 68, 68, 0.25);
   color: #ff6b6b;
 }
+
 .input-area {
   padding: 12px;
   flex-shrink: 0;

@@ -3,94 +3,83 @@ import type { TacticalScenario } from '../types/tactical-scenario';
 import { PLATFORM_META } from '../types/tactical-scenario';
 import { RouteGenerator, type RouteIntent } from './route-generator';
 import { DetectionResolver, type DetectionIntent } from './detection-resolver';
+import stripJsonComments from 'strip-json-comments';
 
 const API_URL = '/api/llm/chat/completions';
 const MODEL = 'deepseek-v3-0324';
 
-const SYSTEM_PROMPT = `你是军事战术方案生成助手。用户描述战术意图后，先简要分析，然后生成JSON方案。
+/** 阶段一：生成战术骨架（不含 components / tasks / environment / interactions） */
+const SKELETON_PROMPT = `你是军事仿真想定生成助手。根据用户意图先输出【战术分析】，再输出【方案详情】JSON骨架。
 
-你只负责战术决策（部署位置、攻防关系、进近方式），路线航路点和探测半径由系统自动计算。
+**骨架JSON结构**（禁止在骨架中输出 components / tasks / environment / interactions，这些将单独生成）：
+{
+  "id": "scenario-xxx", "version": 1, "summary": "简述",
+  "scenarioMetadata": {"name","version","description","author","createTime","category","tags":[]},
+  "metadata": {"generatedAt","modelUsed":"deepseek-v3-0324","confidence":0.85,"startTime","endTime"},
+  "forces": [{"side":"red|blue","name":"力量名","entities":[
+    {"id":"唯一ID","name":"名称","type":"实体类型","side":"red|blue",
+     "position":{"longitude":经度,"latitude":纬度,"altitude":高度},
+     "modelId":"模型ID","modelType":"同构|外部异构"}
+  ]}],
+  "routeIntents": [{"entityId","targetEntityId","side","approach","label"}],
+  "detectionIntents": [{"entityId","type","side"}],
+  "strikeTasks": [], "phases": []
+}
 
-**部署坐标（从中选择，允许±0.3°微调）**：
-蓝方陆地基地: 那霸(127.68,26.21) 嘉手纳(127.77,26.36) 筑城(131.04,33.69) 新田原(131.45,32.08) 横须贺港(139.67,35.29) 佐世保港(129.72,33.17)
-蓝方前沿岛链: 先岛群岛(124.2,24.4) 与那国岛(123.0,24.5)
-红方陆地基地: 惠安(118.8,24.9) 龙田(119.62,25.47) 路桥(121.39,28.57) 衢州(118.87,28.97) 水门(116.6,23.4) 福州(119.3,26.1)
-红方海域: 厦门海域(118.5,24.0) 温州海域(120.5,26.5) 东海舰队(122.0,27.5)
-公海机动区: 东海(124-128,26-30) 台东海域(123-126,22-25) 冲绳南(126-128,24-26)
+**卫星实体（satellite-*）无 position 字段**，其余所有实体必须有 position。
 
-**硬约束**：蓝方禁入lon≤125&lat18-53(中国)和lon119-122&lat21-25(台湾)；红方禁入lon≥129&lat30-46(日本)
+**实体类型与高度（单位：米）**：
+- 空中: air-fighter(8000-12000) air-multirole air-bomber(6000-10000) air-jammer(8000-10000) air-aew(9000-12000) air-recon(10000-15000) helo-attack(500-2000) helo-transport(300-1500) uav-strike(3000-6000) uav-recon(4000-8000) uav-swarm(200-800)
+- 海上: ship-carrier ship-destroyer ship-frigate ship-amphibious ship-usv(0) ship-submarine(0或-50~-300)
+- 地面/设施: ground-tank ground-ifv ground-spg ground-mlrs ground-sam ground-radar ground-ew ground-hq facility-airbase facility-port facility-command facility-radar facility-target（以上全部 altitude=0）
+- 航天: satellite-recon satellite-comm satellite-nav satellite-ew
 
-**实体类型及高度规则（altitude单位：米）**：
+**部署坐标（±0.3°微调）**：
+蓝方: 那霸(127.68,26.21) 嘉手纳(127.77,26.36) 筑城(131.04,33.69) 新田原(131.45,32.08) 横须贺(139.67,35.29) 佐世保(129.72,33.17) 先岛(124.2,24.4) 与那国(123.0,24.5)
+红方: 惠安(118.8,24.9) 龙田(119.62,25.47) 路桥(121.39,28.57) 衢州(118.87,28.97) 福州(119.3,26.1) 厦门(118.5,24.0) 温州(120.5,26.5) 东海舰队(122.0,27.5)
+公海: 东海(124-128,26-30) 台东(123-126,22-25) 冲绳南(126-128,24-26)
 
-[空中力量] — 作战时必须在空中，altitude 必须 > 0：
-  air-fighter    战斗机       altitude: 8000-12000（巡航），500-1000（停机坪）
-  air-multirole  多用途战斗机  altitude: 8000-12000（巡航）
-  air-bomber     轰炸机       altitude: 6000-10000（巡航）
-  air-jammer     电子战机     altitude: 8000-10000（巡航）
-  air-aew        预警机       altitude: 9000-12000（巡航）
-  air-recon      侦察机       altitude: 10000-15000（巡航）
-  helo-attack    武装直升机   altitude: 500-2000（低空飞行）
-  helo-transport 运输直升机   altitude: 300-1500（低空飞行）
-  uav-strike     察打无人机   altitude: 3000-6000（巡航）
-  uav-recon      侦察无人机   altitude: 4000-8000（巡航）
-  uav-swarm      无人机蜂群   altitude: 200-800（低空飞行）
+**硬约束**：蓝方禁入 lon≤125(中国大陆) 和 lon119-122&lat21-25(台湾)；红方禁入 lon≥129&lat30-46(日本)
 
-[海上力量] — 部署在海面（altitude必须为0），潜艇可为负值：
-  ship-carrier    航空母舰  altitude: 0
-  ship-destroyer  驱逐舰    altitude: 0
-  ship-frigate    护卫舰    altitude: 0
-  ship-submarine  潜艇      altitude: 0（水面）或 -50 至 -300（水下巡逻）
-  ship-amphibious 两栖舰    altitude: 0
-  ship-usv        无人艇    altitude: 0
+**兵力配平**：红蓝实体数量差异≤20%
 
-[地面力量] — 部署在陆地（altitude必须为0）：
-  ground-tank    坦克      altitude: 0
-  ground-ifv     步兵战车   altitude: 0
-  ground-spg      自行火炮   altitude: 0
-  ground-mlrs     多管火箭炮 altitude: 0
-  ground-sam      防空导弹   altitude: 0（导弹升空是事件，静态 SAM 系统 altitude=0）
-  ground-radar   雷达站    altitude: 0
-  ground-ew      电子战车   altitude: 0
-  ground-hq      指挥所    altitude: 0
+**routeIntents**（进攻类实体必填）：approach 可选 direct / flanking-north / flanking-south / low-altitude；targetEntityId 必须是敌方实体ID
 
-[设施] — 固定在陆地（altitude必须为0）：
-  facility-airbase  机场/基地  altitude: 0
-  facility-port     港口        altitude: 0
-  facility-command  指挥中心    altitude: 0
-  facility-radar    固定雷达站  altitude: 0
-  facility-target   打击目标    altitude: 0
+**detectionIntents**（感知/防御平台必填）：type 可选 radar / sonar / ew / optical
 
-**严禁行为**：
-- 地面/设施类型 altitude > 500（雷达站不能飞在天上）
-- 海面舰艇（非潜艇）altitude ≠ 0
-- 在禁区内部署对应阵营实体
+**输出格式**：先【战术分析】自然语言，再【方案详情】纯JSON（无注释，无尾随逗号）`;
 
-**兵力配平原则**（重要）：
-- 红蓝双方实体总数必须大致对等，差异不超过 ±20%
-- 例如红方 15 个实体，蓝方应有 12~18 个实体，不能只有 3 个
-- 若用户要求补充某方兵力，必须补充到与对方相当的数量
-- 各作战域（空/海/地）的力量分配应符合想定场景，不能只补充单一类型
+/** 阶段二：基于骨架实体列表生成装备详细配置 */
+const DETAIL_PROMPT = `你是军事仿真装备配置助手。给定战术骨架的实体列表，为关键装备生成详细配置。
 
-**进攻路线生成规则**（重要）：
-- 进攻/打击类实体（air-fighter、air-bomber、uav-strike、ship-destroyer 等）必须生成路线
-- 每条进攻路线必须有明确的目标（targetEntityId = 敌方实体ID）
-- 同一目标可以用不同路线类型（direct、flanking-north、flanking-south、low-altitude）多路进攻
-- 支援/感知类实体（air-aew、air-recon、ground-radar、ground-sam 等）可选生成路线
-- 路线数量建议：进攻方主力应至少 3-5 条路线，体现多方向协同
-- 路线必须经过路线生成器自动插值，不需要给出中间点坐标
+**严格输出纯JSON**，格式如下：
+{
+  "components": [
+    {"entityId":"实体ID","items":[
+      {"id":"comp_xxx","name":"组件名","type":"组件类型",
+       "initialState":{...},
+       "performanceParams":[{"key":"","value":"","unit":""}]}
+    ]}
+  ],
+  "tasks": [{"id","equipRef","name","type":"BehaviorTree|StateMachine|InstructionSeq","config":{...}}],
+  "environment": {"generationModels":{...},"effectModels":[...],"events":[]},
+  "interactions": {"groups":[...],"commandControl":[...],"communications":[...],"detectionLinks":[]}
+}
 
-**输出**：先【战术分析】再【方案详情】JSON。
+**组件类型**：
+- 机动: space_mover(Keplerian: semiMajorAxis/eccentricity/inclination/raan/argOfPerigee/trueAnomaly/epoch) | facility_mover(Geodetic: longitude/latitude/altitude) | ship_mover | air_mover
+- 传感器: sensor_optical(maxDetectRange/groundResolution/swathWidth) | sensor_radar(maxDetectRange/azimuthResolution) | sensor_sar | sensor_infrared
+- 通信: comm_ka(frequency/downlinkRate) | comm_x | comm_uhf
+- 控制/支持: maneuver_adcs(pointingAccuracy/stabilityRate) | support_eps(solarPanelArea/batteryCapacity) | support_thermal
 
-JSON格式:
-{"id":"scenario-xxx","version":1,"summary":"描述",
-"forces":[{"side":"red|blue","name":"部队名","entities":[{"id":"entity-xxx","name":"名称","type":"air-fighter|air-multirole|air-bomber|air-jammer|air-aew|air-recon|helo-attack|helo-transport|uav-strike|uav-recon|uav-swarm|ship-carrier|ship-destroyer|ship-frigate|ship-submarine|ship-amphibious|ship-usv|ground-tank|ground-ifv|ground-spg|ground-mlrs|ground-sam|ground-radar|ground-ew|ground-hq|facility-airbase|facility-port|facility-command|facility-radar|facility-target","side":"red|blue","position":{"longitude":0,"latitude":0,"altitude":0}}]}],
-"routeIntents":[{"entityId":"谁移动","targetEntityId":"打谁","side":"red|blue","approach":"direct|flanking-north|flanking-south|low-altitude","label":"描述"}],
-"detectionIntents":[{"entityId":"谁探测","type":"radar|sonar|ew|optical","side":"red|blue"}],
-"strikeTasks":[{"id":"strike-xxx","attackerEntityId":"xxx","targetEntityId":"xxx","phaseId":"phase-xxx","timestamp":30,"detail":"描述"}],
-"phases":[{"id":"phase-xxx","name":"阶段名","description":"描述","duration":60,"events":[{"type":"movement|detection|attack|destruction","timestamp":0,"sourceEntityId":"xxx","targetEntityId":"xxx","detail":"描述"}],"entityStates":[{"entityId":"xxx","position":{"longitude":0,"latitude":0,"altitude":0},"status":"planned|deployed|engaged|destroyed"}]}],
-"metadata":{"generatedAt":"ISO时间","modelUsed":"model","confidence":0.85}}
+**生成原则（控制输出体积）**：
+- 卫星实体：必须生成完整组件（space_mover + 传感器 + 通信 + 控制 + 支持）
+- 普通作战平台（战斗机/舰艇）：只生成机动组件（air_mover/ship_mover）+ 1个核心传感器，其余省略
+- tasks：只为卫星、无人机、地面站生成，普通战术实体省略
+- environment：有卫星则生成 spaceEnvironment，否则生成简单 atmosphereModel，effectModels 最多3条
+- interactions.communications：只列主要链路，不超过5条
 
-routeIntents的targetEntityId必须是敌方实体ID。坐标必须从参考坐标选择。altitude必须按高度规则设置，不要全设0。所有ID唯一一致。不要输出思考过程标签。`;
+**输出必须是合法JSON：无注释，无尾随逗号**`;
 
 interface GroqMessage {
   role: 'system' | 'user' | 'assistant';
@@ -103,6 +92,7 @@ interface GroqRequest {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  response_format?: { type: string };
 }
 
 interface GroqResponse {
@@ -131,123 +121,63 @@ export class AiTacticalService {
     this.apiKey = apiKey;
   }
 
+  // ─── Public API ─────────────────────────────────────────────────────────────
+
   /**
    * 生成战术想定（流式版本）
+   * 阶段一：流式生成骨架（forces + routeIntents + detectionIntents）
+   * 阶段二：非流式补充 components / tasks / environment / interactions
    */
   async *generateScenarioStream(
     userIntent: string,
     onChunk: (text: string) => void,
   ): AsyncGenerator<StreamChunk, TacticalScenario, void> {
-    const messages: GroqMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userIntent },
-    ];
-
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages,
-        temperature: 0.3,
-        max_tokens: 4096,
-        stream: true,
-      } satisfies GroqRequest),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`API 错误: ${response.status} - ${error}`);
+    // —— Phase 1: stream skeleton ——
+    let skeletonRaw = '';
+    const phaseOneGen = this.streamPhase(SKELETON_PROMPT, userIntent, onChunk);
+    let next = await phaseOneGen.next();
+    while (!next.done) {
+      yield next.value as StreamChunk;
+      next = await phaseOneGen.next();
     }
+    skeletonRaw = next.value as string;
 
-    if (!response.body) {
-      throw new Error('API 返回空响应体');
-    }
+    const scenario = this.parseAndPostProcess(skeletonRaw);
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let fullContent = '';
-
+    // —— Phase 2: enrich details (non-streaming) ——
+    const detailMsg = '\n\n---\n[正在生成装备详细配置...]\n';
+    onChunk(detailMsg);
+    yield { content: detailMsg, done: false };
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-            if (data === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                fullContent += delta;
-                onChunk(delta);
-                yield { content: delta, done: false };
-              }
-            } catch {
-              // 忽略解析错误
-            }
-          }
-        }
-      }
-    } finally {
-      reader.releaseLock();
+      await this.enrichWithDetails(scenario);
+    } catch (e) {
+      console.warn('[Phase2] 详细配置生成失败，使用骨架数据:', e);
     }
 
     yield { content: '', done: true };
-    return this.parseAndPostProcess(fullContent);
+    return scenario;
   }
 
   /**
    * 生成战术想定（非流式版本）
+   * 同样分两阶段，适合后台批量生成
    */
   async generateScenario(userIntent: string): Promise<TacticalScenario> {
-    const messages: GroqMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userIntent },
-    ];
+    // Phase 1
+    const skeletonRaw = await this.callApi(
+      SKELETON_PROMPT,
+      [{ role: 'user', content: userIntent }],
+      { stream: false, max_tokens: 16000 },
+    );
+    const scenario = this.parseAndPostProcess(skeletonRaw);
 
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages,
-        temperature: 0.3,
-        max_tokens: 4096,
-        stream: false,
-      } satisfies GroqRequest),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Groq API 错误: ${response.status} - ${error}`);
+    // Phase 2
+    try {
+      await this.enrichWithDetails(scenario);
+    } catch (e) {
+      console.warn('[Phase2] 详细配置生成失败，使用骨架数据:', e);
     }
-
-    const data: GroqResponse = await response.json();
-    if (data.error) {
-      throw new Error(`Groq API 错误: ${data.error.type} - ${data.error.message}`);
-    }
-    const content = data.choices[0]?.message?.content;
-
-    if (!content) {
-      throw new Error('Groq API 返回空内容');
-    }
-
-    return this.parseAndPostProcess(content);
+    return scenario;
   }
 
   /**
@@ -256,11 +186,21 @@ export class AiTacticalService {
   private parseAndPostProcess(raw: string): TacticalScenario {
     const parsed = this.parseRawJson(raw);
 
+    // 验证实体position字段完整性
+    this.validateEntityPositions(parsed);
+
     // 后处理 1：将声明式 routeIntents 转换为实际路线
     if ((parsed as any).routeIntents) {
       const intents: RouteIntent[] = (parsed as any).routeIntents;
       const routes = intents
-        .map(intent => this.routeGenerator.generateFromIntent(intent, parsed))
+        .map(intent => {
+          try {
+            return this.routeGenerator.generateFromIntent(intent, parsed);
+          } catch (err) {
+            console.error(`[路线生成失败] intent:`, intent, err);
+            return null;
+          }
+        })
         .filter((r): r is NonNullable<typeof r> => r !== null);
       parsed.routes = routes;
       delete (parsed as any).routeIntents;
@@ -268,9 +208,14 @@ export class AiTacticalService {
 
     // 后处理 1b：如果 AI 给了旧格式 routes，修补终点
     if (parsed.routes && !(parsed as any).routeIntents) {
-      parsed.routes = parsed.routes.map(route =>
-        this.routeGenerator.fixRouteEndpoint(route, parsed)
-      );
+      parsed.routes = parsed.routes.map(route => {
+        try {
+          return this.routeGenerator.fixRouteEndpoint(route, parsed);
+        } catch (err) {
+          console.error(`[路线修补失败] route:`, route, err);
+          return route;
+        }
+      });
     }
 
     // 后处理 2：将声明式 detectionIntents 转换为实际探测范围
@@ -308,12 +253,48 @@ export class AiTacticalService {
   }
 
   /**
+   * 验证实体position字段完整性
+   */
+  private validateEntityPositions(scenario: TacticalScenario): void {
+    const errors: string[] = [];
+
+    scenario.forces.forEach((force, forceIdx) => {
+      force.entities.forEach((entity, entityIdx) => {
+        // 卫星使用轨道根数（Keplerian）描述位置，存放在 components[].initialState 中
+        // 不存在 position 字段，跳过校验
+        if (entity.type?.startsWith('satellite')) return;
+
+        if (!entity.position) {
+          errors.push(`forces[${forceIdx}].entities[${entityIdx}] (${entity.id || 'unknown'}) 缺少 position 字段`);
+        } else {
+          if (entity.position.latitude === undefined || entity.position.latitude === null) {
+            errors.push(`实体 ${entity.id || 'unknown'} 的 position.latitude 未定义`);
+          }
+          if (entity.position.longitude === undefined || entity.position.longitude === null) {
+            errors.push(`实体 ${entity.id || 'unknown'} 的 position.longitude 未定义`);
+          }
+          if (entity.position.altitude === undefined || entity.position.altitude === null) {
+            errors.push(`实体 ${entity.id || 'unknown'} 的 position.altitude 未定义`);
+          }
+        }
+      });
+    });
+
+    if (errors.length > 0) {
+      throw new Error(`AI返回的实体位置数据不完整:\n${errors.join('\n')}`);
+    }
+  }
+
+  /**
    * 根据平台类型自动补全缺失或为 0 的高度
    * 数据来源：PLATFORM_META.defaultAltitude（统一维护，无需在此处重复）
    */
   private fixAltitudes(scenario: TacticalScenario): void {
     scenario.forces.forEach(force => {
       force.entities.forEach(entity => {
+        // 卫星无 position 字段，跳过高度补全
+        if (!entity.position) return;
+
         const meta = PLATFORM_META[entity.type];
         if (!meta) return;
 
@@ -357,14 +338,24 @@ export class AiTacticalService {
       jsonStr = jsonStr.substring(jsonStartIndex, jsonEndIndex + 1);
     }
 
+    // 使用 strip-json-comments 库移除注释（兜底方案）
+    // 这个库能安全地移除注释，不会误删字符串内的 // 或 /* */
+    jsonStr = stripJsonComments(jsonStr);
+
+    // 修复 AI 常见的尾随逗号问题（数组/对象末尾多余逗号）
+    jsonStr = jsonStr
+      .replace(/,\s*([}\]])/g, '$1')  // 移除 ] 或 } 前的尾随逗号
+      .replace(/([{[,])\s*,/g, '$1'); // 移除连续逗号
+
     try {
       const parsed = JSON.parse(jsonStr) as TacticalScenario;
 
       if (!parsed.forces || !Array.isArray(parsed.forces)) {
         throw new Error('missing forces array');
       }
+      // phases 为可选字段，AI 新格式下可能不生成，自动兜底为空数组
       if (!parsed.phases || !Array.isArray(parsed.phases)) {
-        throw new Error('missing phases array');
+        parsed.phases = [];
       }
 
       if (!parsed.metadata) {
@@ -376,39 +367,77 @@ export class AiTacticalService {
 
       return parsed;
     } catch (err) {
+      // 打印出错位置附近的上下文，便于排查是截断还是格式问题
+      if (err instanceof SyntaxError) {
+        const posMatch = err.message.match(/position (\d+)/);
+        if (posMatch) {
+          const pos = parseInt(posMatch[1], 10);
+          const start = Math.max(0, pos - 80);
+          const end = Math.min(jsonStr.length, pos + 80);
+          console.error(
+            `[JSON解析] 出错位置 ${pos}/${jsonStr.length} 总长度，附近内容:\n` +
+            JSON.stringify(jsonStr.substring(start, end))
+          );
+          if (pos >= jsonStr.length - 50) {
+            throw new Error(`战术方案 JSON 被截断（位置 ${pos}，总长 ${jsonStr.length}）。请尝试减少实体数量或使用更简洁的想定描述。`);
+          }
+        }
+      }
       throw new Error(`战术方案 JSON 解析失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
+  // ─── Private helpers ────────────────────────────────────────────────────────
+
   /**
-   * 修正方案（追加反馈）
+   * 低级 API 调用（非流式）
    */
-  async refineScenario(
-    scenario: TacticalScenario,
-    feedback: string
-  ): Promise<TacticalScenario> {
-    const contextPrompt = `
-当前战术方案：
-${JSON.stringify({
-  id: scenario.id,
-  version: scenario.version,
-  forces: scenario.forces,
-  phases: scenario.phases,
-  routes: scenario.routes,
-  strikeTasks: scenario.strikeTasks,
-  detectionZones: scenario.detectionZones,
-}, null, 2)}
-
-用户反馈：${feedback}
-请根据反馈修改方案，保留所有 ID 和结构不变，只调整对应字段。
-可以使用 routeIntents 和 detectionIntents 声明式格式，系统会自动处理。
-`;
-
-    const messages: GroqMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: contextPrompt },
+  private async callApi(
+    systemPrompt: string,
+    messages: GroqMessage[],
+    opts: { stream?: boolean; max_tokens?: number },
+  ): Promise<string> {
+    const fullMessages: GroqMessage[] = [
+      { role: 'system', content: systemPrompt },
+      ...messages,
     ];
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: fullMessages,
+        temperature: 0.3,
+        max_tokens: opts.max_tokens ?? 16000,
+        stream: false,
+      } satisfies GroqRequest),
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`API 错误: ${response.status} - ${err}`);
+    }
+    const data: GroqResponse = await response.json();
+    if (data.error) throw new Error(`API 错误: ${data.error.type} - ${data.error.message}`);
+    const content = data.choices[0]?.message?.content;
+    if (!content) throw new Error('API 返回空内容');
+    return content;
+  }
 
+  /**
+   * 流式调用，collect 全文后返回
+   */
+  private async *streamPhase(
+    systemPrompt: string,
+    userContent: string,
+    onChunk: (text: string) => void,
+  ): AsyncGenerator<StreamChunk, string, void> {
+    const messages: GroqMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ];
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -419,25 +448,137 @@ ${JSON.stringify({
         model: MODEL,
         messages,
         temperature: 0.3,
-        max_tokens: 4096,
-        stream: false,
-      }),
+        max_tokens: 16000,
+        stream: true,
+      } satisfies GroqRequest),
     });
-
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Groq API 错误: ${response.status} - ${error}`);
+      const err = await response.text();
+      throw new Error(`API 错误: ${response.status} - ${err}`);
     }
+    if (!response.body) throw new Error('API 返回空响应体');
 
-    const data: GroqResponse = await response.json();
-    if (data.error) {
-      throw new Error(`Groq API 错误: ${data.error.type} - ${data.error.message}`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullContent = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              fullContent += delta;
+              onChunk(delta);
+              yield { content: delta, done: false };
+            }
+          } catch { /* ignore SSE parse errors */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
     }
-    const content = data.choices[0]?.message?.content;
-    if (!content) throw new Error('Groq API 返回空内容');
+    return fullContent;
+  }
 
-    const refined = this.parseAndPostProcess(content);
+  /**
+   * 阶段二：补充 components / tasks / environment / interactions
+   */
+  private async enrichWithDetails(scenario: TacticalScenario): Promise<void> {
+    // 提取实体摘要（不含 components，减少输入 token）
+    const entitySummary = scenario.forces.flatMap(f =>
+      f.entities.map(e => ({ id: e.id, name: e.name, type: e.type, side: e.side }))
+    );
+    const userMsg = `实体列表：\n${JSON.stringify(entitySummary, null, 2)}\n\n请生成装备详细配置。`;
+    const raw = await this.callApi(
+      DETAIL_PROMPT,
+      [{ role: 'user', content: userMsg }],
+      { max_tokens: 12000 },
+    );
+    this.mergeDetailPatch(scenario, raw);
+  }
+
+  /**
+   * 将阶段二返回的 JSON patch 合并进 scenario
+   */
+  private mergeDetailPatch(scenario: TacticalScenario, raw: string): void {
+    let patch: any;
+    try {
+      const jsonStr = this.extractJsonString(raw);
+      patch = JSON.parse(jsonStr);
+    } catch {
+      console.warn('[Phase2] 详细配置 JSON 解析失败，跳过合并');
+      return;
+    }
+    // Merge components
+    if (Array.isArray(patch.components)) {
+      for (const { entityId, items } of patch.components) {
+        if (!Array.isArray(items)) continue;
+        for (const force of scenario.forces) {
+          const entity = force.entities.find(e => e.id === entityId);
+          if (entity) (entity as any).components = items;
+        }
+      }
+    }
+    if (Array.isArray(patch.tasks)) (scenario as any).tasks = patch.tasks;
+    if (patch.environment) (scenario as any).environment = patch.environment;
+    if (patch.interactions) (scenario as any).interactions = patch.interactions;
+  }
+
+  /**
+   * 从任意文本中提取第一个完整 JSON 对象字符串
+   */
+  private extractJsonString(raw: string): string {
+    let s = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    // strip markdown fences
+    const fence = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fence) s = fence[1];
+    const start = s.indexOf('{');
+    const end = s.lastIndexOf('}');
+    if (start !== -1 && end !== -1) s = s.substring(start, end + 1);
+    return s;
+  }
+
+  /**
+   * 修正方案（追加反馈）
+   */
+  async refineScenario(
+    scenario: TacticalScenario,
+    feedback: string
+  ): Promise<TacticalScenario> {
+    // 只把骨架字段（不含 components/tasks/environment）放进 context，避免超 token
+    const skeleton = {
+      id: scenario.id,
+      version: scenario.version,
+      forces: scenario.forces.map(f => ({
+        ...f,
+        entities: f.entities.map(({ id, name, type, side, position }: any) => ({ id, name, type, side, position })),
+      })),
+      phases: scenario.phases,
+      strikeTasks: scenario.strikeTasks,
+    };
+    const contextPrompt =
+      `当前骨架方案：\n${JSON.stringify(skeleton, null, 2)}\n\n用户反馈：${feedback}\n` +
+      `请修改骨架方案，可用 routeIntents / detectionIntents 声明式格式，系统自动处理。`;
+
+    const raw = await this.callApi(
+      SKELETON_PROMPT,
+      [{ role: 'user', content: contextPrompt }],
+      { max_tokens: 16000 },
+    );
+    const refined = this.parseAndPostProcess(raw);
     refined.version = scenario.version + 1;
+    // re-enrich details
+    try { await this.enrichWithDetails(refined); } catch { /* best-effort */ }
     return refined;
   }
 }

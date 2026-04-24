@@ -6,3 +6,4 @@ dist/
 .worktrees/
 .env.local
 apps/web/.env.local
+data-example

@@ -4,6 +4,8 @@ import { ref, watch, nextTick } from 'vue';
 import { useTacticalScenarioStore } from '../../stores/tactical-scenario';
 import { XmlScenarioParser } from '../../services/xml-scenario-parser';
 import { XmlScenarioExporter } from '../../services/xml-scenario-exporter';
+import { normalizeTacticalScenario } from '../../services/tactical-scenario-normalizer';
+import type { TacticalScenario } from '../../types/tactical-scenario';
 import PhaseTimeline from './PhaseTimeline.vue';
 import ScenarioPreview from './ScenarioPreview.vue';
 
@@ -72,7 +74,10 @@ async function onFileSelected(event: Event) {
   (event.target as HTMLInputElement).value = '';
   try {
     const content = await file.text();
-    const scenario = xmlParser.parse(content);
+    const trimmed = content.trim();
+    const scenario = file.name.toLowerCase().endsWith('.json') || trimmed.startsWith('{')
+      ? normalizeTacticalScenario(JSON.parse(trimmed) as TacticalScenario)
+      : xmlParser.parse(content);
     store.loadScenario(scenario);
     showScenarioPreview.value = true;
   } catch (err) {
@@ -95,6 +100,25 @@ function handleExportXml() {
     URL.revokeObjectURL(url);
   } catch (err) {
     store.error = `XML 导出失败: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+// 导出原始 JSON 数据，用于调试 XML 导出问题
+function handleExportJson() {
+  const scenario = store.currentScenario;
+  if (!scenario) return;
+  try {
+    const jsonContent = JSON.stringify(scenario, null, 2);
+    const blob = new Blob([jsonContent], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const name = scenario.scenarioMetadata?.name ?? scenario.id;
+    a.download = `${name}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    store.error = `JSON 导出失败: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -214,7 +238,14 @@ function stripJsonFromContent(content: string): string {
         :disabled="!store.currentScenario"
         @click="handleExportXml"
       >
-        📤 导出
+        📤 导出 XML
+      </button>
+      <button
+        class="action-btn action-btn-secondary"
+        :disabled="!store.currentScenario"
+        @click="handleExportJson"
+      >
+        📋 导出 JSON
       </button>
       <button
         class="action-btn action-btn-danger"
@@ -228,7 +259,7 @@ function stripJsonFromContent(content: string): string {
     <input
       ref="fileInput"
       type="file"
-      accept=".xml,.txt"
+      accept=".xml,.json,.txt"
       style="display: none"
       @change="onFileSelected"
     />

@@ -15,7 +15,12 @@ import type {
   EnvironmentConfig,
   InteractionConfig,
   ScenarioMetadata,
+  Route,
+  DetectionZone,
+  StrikeTask,
+  Phase,
 } from '../types/tactical-scenario';
+import { normalizeTacticalScenario } from './tactical-scenario-normalizer';
 
 function el(doc: Document, tag: string, text?: string): Element {
   const e = doc.createElement(tag);
@@ -40,6 +45,31 @@ function appendParams(doc: Document, parent: Element, params: ComponentParam[]) 
     paramsEl.appendChild(paramEl);
   }
   parent.appendChild(paramsEl);
+}
+
+function appendInitialStateValue(doc: Document, parent: Element, key: string, value: unknown) {
+  if (value === undefined || value === null || key === 'positionType' || key === 'orbitType') return;
+  if (typeof value === 'object') return;
+  parent.appendChild(el(doc, key, String(value)));
+}
+
+function ensureGeodeticState(doc: Document, compEl: Element, pos: EntitySpec['position']) {
+  let stateEl = compEl.querySelector(':scope > InitialState');
+  if (!stateEl) {
+    stateEl = doc.createElement('InitialState');
+    compEl.appendChild(stateEl);
+  }
+
+  const replaceChildText = (tag: string, value: string, attrs: Record<string, string> = {}) => {
+    const existing = stateEl!.querySelector(`:scope > ${tag}`);
+    if (existing) stateEl!.removeChild(existing);
+    stateEl!.appendChild(elAttr(doc, tag, attrs, value));
+  };
+
+  replaceChildText('PositionType', 'Geodetic');
+  replaceChildText('Longitude', String(pos.longitude), { unit: 'deg' });
+  replaceChildText('Latitude', String(pos.latitude), { unit: 'deg' });
+  replaceChildText('Altitude', String(pos.altitude ?? 0), { unit: 'm' });
 }
 
 function exportMetadata(doc: Document, root: Element, meta: ScenarioMetadata) {
@@ -95,7 +125,7 @@ function exportComponent(doc: Document, comp: EquipmentComponent): Element {
 
   if (comp.initialState) {
     const stateEl = doc.createElement('InitialState');
-    const s = comp.initialState;
+    const s = comp.initialState as any;
     if (s.positionType === 'Geodetic') {
       stateEl.appendChild(el(doc, 'PositionType', 'Geodetic'));
       stateEl.appendChild(elAttr(doc, 'Longitude', { unit: 'deg' }, String(s.longitude ?? 0)));
@@ -110,8 +140,10 @@ function exportComponent(doc: Document, comp: EquipmentComponent): Element {
       stateEl.appendChild(elAttr(doc, 'ArgOfPerigee', { unit: 'deg' }, String(s.argOfPerigee ?? 0)));
       stateEl.appendChild(elAttr(doc, 'TrueAnomaly', { unit: 'deg' }, String(s.trueAnomaly ?? 0)));
       if (s.epoch) stateEl.appendChild(el(doc, 'Epoch', s.epoch));
+    } else {
+      Object.entries(s).forEach(([key, value]) => appendInitialStateValue(doc, stateEl, key, value));
     }
-    compEl.appendChild(stateEl);
+    if (stateEl.childNodes.length > 0) compEl.appendChild(stateEl);
   }
 
   return compEl;
@@ -146,11 +178,47 @@ function exportEquipment(doc: Document, entity: EntitySpec): Element {
   if (entity.interfaceProtocol) eqEl.appendChild(el(doc, 'InterfaceProtocol', entity.interfaceProtocol));
   if (entity.federateName) eqEl.appendChild(el(doc, 'FederateName', entity.federateName));
 
+  // 写入组件（含位置）
+  const pos = entity.position;
+  const hasPos = pos && (pos.longitude !== 0 || pos.latitude !== 0);
+
   if (entity.components?.length) {
     const compsEl = doc.createElement('Components');
+    let posWritten = false;
     for (const comp of entity.components) {
-      compsEl.appendChild(exportComponent(doc, comp));
+      const compEl = exportComponent(doc, comp);
+      // 找 mover 组件写入实体位置
+      if (!posWritten && hasPos && comp.type.endsWith('_mover')) {
+        // 如果组件自身没有 Geodetic 位置，则注入实体级坐标
+        if (!comp.initialState?.positionType || comp.initialState.positionType === 'Geodetic') {
+          // 替换或补写 InitialState
+          ensureGeodeticState(doc, compEl, pos);
+          posWritten = true;
+        }
+      }
+      compsEl.appendChild(compEl);
     }
+    // 若没有 mover 组件但有位置，把位置写到第一个组件
+    if (!posWritten && hasPos) {
+      const firstCompEl = compsEl.querySelector('Component');
+      if (firstCompEl) {
+        ensureGeodeticState(doc, firstCompEl, pos);
+      }
+    }
+    eqEl.appendChild(compsEl);
+  } else if (hasPos) {
+    // 没有组件但有位置：自动生成一个 mover 组件承载位置
+    const compsEl = doc.createElement('Components');
+    const compEl = elAttr(doc, 'Component', { id: `${entity.id}_mover` });
+    compEl.appendChild(el(doc, 'Name', `${entity.name}机动系统`));
+    compEl.appendChild(el(doc, 'Type', 'facility_mover'));
+    const stateEl = doc.createElement('InitialState');
+    stateEl.appendChild(el(doc, 'PositionType', 'Geodetic'));
+    stateEl.appendChild(elAttr(doc, 'Longitude', { unit: 'deg' }, String(pos.longitude)));
+    stateEl.appendChild(elAttr(doc, 'Latitude', { unit: 'deg' }, String(pos.latitude)));
+    stateEl.appendChild(elAttr(doc, 'Altitude', { unit: 'm' }, String(pos.altitude ?? 0)));
+    compEl.appendChild(stateEl);
+    compsEl.appendChild(compEl);
     eqEl.appendChild(compsEl);
   }
 
@@ -189,27 +257,29 @@ function exportTasks(doc: Document, root: Element, tasks: TaskConfig[]) {
 
     if (task.type === 'BehaviorTree') {
       const cfg = task.config as BehaviorTreeConfig;
-      const btEl = doc.createElement('BehaviorTree');
-      const rootEl = elAttr(doc, 'Root', { type: cfg.root.nodeType, name: cfg.root.name });
-      for (const child of cfg.root.children) rootEl.appendChild(exportBehaviorNode(doc, child));
-      btEl.appendChild(rootEl);
-      taskEl.appendChild(btEl);
+      if (cfg?.root) {
+        const btEl = doc.createElement('BehaviorTree');
+        const rootEl = elAttr(doc, 'Root', { type: cfg.root.nodeType ?? 'Sequence', name: cfg.root.name ?? 'root' });
+        for (const child of (cfg.root.children ?? [])) rootEl.appendChild(exportBehaviorNode(doc, child));
+        btEl.appendChild(rootEl);
+        taskEl.appendChild(btEl);
+      }
     } else if (task.type === 'StateMachine') {
       const cfg = task.config as StateMachineConfig;
-      const smEl = elAttr(doc, 'StateMachine', { initialState: cfg.initialState });
-      for (const state of cfg.states) {
+      const smEl = elAttr(doc, 'StateMachine', { initialState: cfg.initialState ?? '' });
+      for (const state of (cfg.states ?? [])) {
         const stateEl = elAttr(doc, 'State', { name: state.name });
         if (state.entryAction) {
           const entryEl = elAttr(doc, 'EntryAction', { component: state.entryAction.component });
-          if (state.entryAction.params.length) appendParams(doc, entryEl, state.entryAction.params);
+          if (state.entryAction.params?.length) appendParams(doc, entryEl, state.entryAction.params);
           stateEl.appendChild(entryEl);
         }
         if (state.exitAction) {
           const exitEl = elAttr(doc, 'ExitAction', { component: state.exitAction.component });
-          if (state.exitAction.params.length) appendParams(doc, exitEl, state.exitAction.params);
+          if (state.exitAction.params?.length) appendParams(doc, exitEl, state.exitAction.params);
           stateEl.appendChild(exitEl);
         }
-        for (const t of state.transitions) {
+        for (const t of (state.transitions ?? [])) {
           stateEl.appendChild(elAttr(doc, 'Transition', { event: t.event, target: t.target }));
         }
         smEl.appendChild(stateEl);
@@ -218,11 +288,11 @@ function exportTasks(doc: Document, root: Element, tasks: TaskConfig[]) {
     } else {
       const cfg = task.config as InstructionSeqConfig;
       const seqEl = doc.createElement('InstructionSequence');
-      for (const ins of cfg.instructions) {
+      for (const ins of (cfg.instructions ?? [])) {
         const insEl = elAttr(doc, 'Instruction', { id: ins.id, time: ins.time });
         insEl.appendChild(el(doc, 'Type', ins.type));
         insEl.appendChild(el(doc, 'Component', ins.component));
-        if (ins.params.length) appendParams(doc, insEl, ins.params);
+        if (ins.params?.length) appendParams(doc, insEl, ins.params);
         seqEl.appendChild(insEl);
       }
       taskEl.appendChild(seqEl);
@@ -267,42 +337,48 @@ function exportEnvironment(doc: Document, root: Element, env: EnvironmentConfig)
   if (env.generationModels.atmosphereModel) {
     const a = env.generationModels.atmosphereModel;
     const atmosEl = doc.createElement('AtmosphereModel');
-    atmosEl.appendChild(el(doc, 'Weather', a.weather));
-    atmosEl.appendChild(el(doc, 'RainLevel', a.rainLevel));
-    atmosEl.appendChild(elAttr(doc, 'WindSpeed', { unit: 'm/s' }, String(a.windSpeed)));
-    atmosEl.appendChild(elAttr(doc, 'WindDirection', { unit: 'deg' }, String(a.windDirection)));
-    const coverEl = doc.createElement('CoverageArea');
-    coverEl.appendChild(elAttr(doc, 'LonMin', { unit: 'deg' }, String(a.coverageArea.lonMin)));
-    coverEl.appendChild(elAttr(doc, 'LonMax', { unit: 'deg' }, String(a.coverageArea.lonMax)));
-    coverEl.appendChild(elAttr(doc, 'LatMin', { unit: 'deg' }, String(a.coverageArea.latMin)));
-    coverEl.appendChild(elAttr(doc, 'LatMax', { unit: 'deg' }, String(a.coverageArea.latMax)));
-    atmosEl.appendChild(coverEl);
-    const resEl = doc.createElement('DataResolution');
-    resEl.appendChild(elAttr(doc, 'LatitudeStep', { unit: 'deg' }, String(a.dataResolution.latitudeStep)));
-    resEl.appendChild(elAttr(doc, 'LongitudeStep', { unit: 'deg' }, String(a.dataResolution.longitudeStep)));
-    resEl.appendChild(elAttr(doc, 'AltitudeStep', { unit: 'm' }, String(a.dataResolution.altitudeStep)));
-    atmosEl.appendChild(resEl);
-    atmosEl.appendChild(elAttr(doc, 'TimeStep', { unit: 's' }, String(a.timeStep)));
-    atmosEl.appendChild(el(doc, 'ModelServiceUrl', a.modelServiceUrl));
-    atmosEl.appendChild(el(doc, 'DataGenerationUrl', a.dataGenerationUrl));
+    if (a.weather != null) atmosEl.appendChild(el(doc, 'Weather', a.weather));
+    if (a.rainLevel != null) atmosEl.appendChild(el(doc, 'RainLevel', a.rainLevel));
+    if (a.windSpeed != null && isFinite(a.windSpeed)) atmosEl.appendChild(elAttr(doc, 'WindSpeed', { unit: 'm/s' }, String(a.windSpeed)));
+    if (a.windDirection != null && isFinite(a.windDirection)) atmosEl.appendChild(elAttr(doc, 'WindDirection', { unit: 'deg' }, String(a.windDirection)));
+    if (a.coverageArea) {
+      const coverEl = doc.createElement('CoverageArea');
+      coverEl.appendChild(elAttr(doc, 'LonMin', { unit: 'deg' }, String(a.coverageArea.lonMin)));
+      coverEl.appendChild(elAttr(doc, 'LonMax', { unit: 'deg' }, String(a.coverageArea.lonMax)));
+      coverEl.appendChild(elAttr(doc, 'LatMin', { unit: 'deg' }, String(a.coverageArea.latMin)));
+      coverEl.appendChild(elAttr(doc, 'LatMax', { unit: 'deg' }, String(a.coverageArea.latMax)));
+      atmosEl.appendChild(coverEl);
+    }
+    if (a.dataResolution) {
+      const resEl = doc.createElement('DataResolution');
+      resEl.appendChild(elAttr(doc, 'LatitudeStep', { unit: 'deg' }, String(a.dataResolution.latitudeStep)));
+      resEl.appendChild(elAttr(doc, 'LongitudeStep', { unit: 'deg' }, String(a.dataResolution.longitudeStep)));
+      resEl.appendChild(elAttr(doc, 'AltitudeStep', { unit: 'm' }, String(a.dataResolution.altitudeStep)));
+      atmosEl.appendChild(resEl);
+    }
+    if (a.timeStep !== undefined) atmosEl.appendChild(elAttr(doc, 'TimeStep', { unit: 's' }, String(a.timeStep)));
+    if (a.modelServiceUrl) atmosEl.appendChild(el(doc, 'ModelServiceUrl', a.modelServiceUrl));
+    if (a.dataGenerationUrl) atmosEl.appendChild(el(doc, 'DataGenerationUrl', a.dataGenerationUrl));
     genEl.appendChild(atmosEl);
   }
 
   envEl.appendChild(genEl);
 
-  if (env.effectModels.length) {
+  if (env.effectModels?.length) {
     const effectsEl = doc.createElement('EffectModels');
     for (const em of env.effectModels) {
-      const emEl = elAttr(doc, 'EffectModel', { id: em.id, category: em.category });
-      emEl.appendChild(el(doc, 'Name', em.name));
-      emEl.appendChild(el(doc, 'Enabled', String(em.enabled)));
-      if (em.params.length) appendParams(doc, emEl, em.params);
+      // 跳过字段不完整的 effectModel（AI 可能生成空对象）
+      if (!em?.id || em.id === 'undefined') continue;
+      const emEl = elAttr(doc, 'EffectModel', { id: em.id, category: em.category ?? '' });
+      if (em.name) emEl.appendChild(el(doc, 'Name', em.name));
+      if (em.enabled != null) emEl.appendChild(el(doc, 'Enabled', String(em.enabled)));
+      if (em.params?.length) appendParams(doc, emEl, em.params);
       effectsEl.appendChild(emEl);
     }
     envEl.appendChild(effectsEl);
   }
 
-  if (env.events.length) {
+  if (env.events?.length) {
     const eventsEl = doc.createElement('Events');
     for (const ev of env.events) {
       const evEl = elAttr(doc, 'Event', { id: ev.id });
@@ -319,7 +395,7 @@ function exportEnvironment(doc: Document, root: Element, env: EnvironmentConfig)
         areaEl.appendChild(elAttr(doc, 'LatMax', { unit: 'deg' }, String(ev.affectedArea.latMax)));
         evEl.appendChild(areaEl);
       }
-      if (ev.params.length) appendParams(doc, evEl, ev.params);
+      if (ev.params?.length) appendParams(doc, evEl, ev.params);
       eventsEl.appendChild(evEl);
     }
     envEl.appendChild(eventsEl);
@@ -331,7 +407,7 @@ function exportEnvironment(doc: Document, root: Element, env: EnvironmentConfig)
 function exportInteractions(doc: Document, root: Element, interactions: InteractionConfig) {
   const intEl = doc.createElement('Interactions');
 
-  if (interactions.groups.length) {
+  if (interactions.groups?.length) {
     const groupsEl = doc.createElement('Groups');
     for (const g of interactions.groups) {
       const gEl = elAttr(doc, 'Group', { id: g.id, name: g.name });
@@ -343,7 +419,7 @@ function exportInteractions(doc: Document, root: Element, interactions: Interact
     intEl.appendChild(groupsEl);
   }
 
-  if (interactions.commandControl.length) {
+  if (interactions.commandControl?.length) {
     const ccEl = doc.createElement('CommandControl');
     for (const cc of interactions.commandControl) {
       const linkEl = elAttr(doc, 'Link', { id: cc.id });
@@ -356,7 +432,7 @@ function exportInteractions(doc: Document, root: Element, interactions: Interact
     intEl.appendChild(ccEl);
   }
 
-  if (interactions.communications.length) {
+  if (interactions.communications?.length) {
     const commsEl = doc.createElement('Communications');
     for (const comm of interactions.communications) {
       const linkEl = elAttr(doc, 'Link', { id: comm.id });
@@ -371,7 +447,7 @@ function exportInteractions(doc: Document, root: Element, interactions: Interact
     intEl.appendChild(commsEl);
   }
 
-  if (interactions.detectionLinks.length) {
+  if (interactions.detectionLinks?.length) {
     const detEl = doc.createElement('DetectionLinks');
     for (const d of interactions.detectionLinks) {
       const linkEl = elAttr(doc, 'Link', { id: d.id });
@@ -386,13 +462,141 @@ function exportInteractions(doc: Document, root: Element, interactions: Interact
   root.appendChild(intEl);
 }
 
+function exportRoutes(doc: Document, root: Element, routes: Route[]) {
+  if (!routes || routes.length === 0) return;
+  const routesEl = doc.createElement('Routes');
+  for (const route of routes) {
+    const routeEl = elAttr(doc, 'Route', { 
+      entityId: route.entityId, 
+      side: route.side,
+      ...(route.label ? { label: route.label } : {})
+    });
+    const pointsEl = doc.createElement('Points');
+    for (const p of route.points) {
+      const ptAttr: Record<string, string> = {
+        longitude: String(p.position.longitude),
+        latitude: String(p.position.latitude),
+        altitude: String(p.position.altitude ?? 0)
+      };
+      if (p.timestamp !== undefined) {
+        ptAttr.timestamp = String(p.timestamp);
+      }
+      pointsEl.appendChild(elAttr(doc, 'Point', ptAttr));
+    }
+    routeEl.appendChild(pointsEl);
+    routesEl.appendChild(routeEl);
+  }
+  root.appendChild(routesEl);
+}
+
+function exportDetectionZones(doc: Document, root: Element, zones: DetectionZone[]) {
+  if (!zones || zones.length === 0) return;
+  const zonesEl = doc.createElement('DetectionZones');
+  for (const zone of zones) {
+    const zoneEl = elAttr(doc, 'DetectionZone', {
+      entityId: zone.entityId,
+      side: zone.side,
+      radiusMeters: String(zone.radiusMeters),
+      ...(zone.label ? { label: zone.label } : {})
+    });
+    const centerEl = elAttr(doc, 'Center', {
+      longitude: String(zone.center.longitude),
+      latitude: String(zone.center.latitude),
+      altitude: String(zone.center.altitude ?? 0)
+    });
+    zoneEl.appendChild(centerEl);
+    zonesEl.appendChild(zoneEl);
+  }
+  root.appendChild(zonesEl);
+}
+
+function exportStrikeTasks(doc: Document, root: Element, tasks: StrikeTask[]) {
+  if (!tasks || tasks.length === 0) return;
+  const tasksEl = doc.createElement('StrikeTasks');
+  for (const task of tasks) {
+    const taskEl = elAttr(doc, 'StrikeTask', {
+      id: task.id,
+      attackerEntityId: task.attackerEntityId,
+      targetEntityId: task.targetEntityId,
+      phaseId: task.phaseId,
+      timestamp: String(task.timestamp),
+      detail: task.detail
+    });
+    tasksEl.appendChild(taskEl);
+  }
+  root.appendChild(tasksEl);
+}
+
+function exportPhases(doc: Document, root: Element, phases: Phase[]) {
+  if (!phases || phases.length === 0) return;
+  const phasesEl = doc.createElement('Phases');
+  for (const phase of phases) {
+    const phaseEl = elAttr(doc, 'Phase', {
+      id: phase.id,
+      name: phase.name,
+      duration: String(phase.duration)
+    });
+    phaseEl.appendChild(el(doc, 'Description', phase.description));
+    
+    if (phase.events && phase.events.length > 0) {
+      const eventsEl = doc.createElement('Events');
+      for (const ev of phase.events) {
+        const evAttr: Record<string, string> = {
+          type: ev.type,
+          timestamp: String(ev.timestamp),
+          sourceEntityId: ev.sourceEntityId,
+          detail: ev.detail
+        };
+        if (ev.targetEntityId) {
+          evAttr.targetEntityId = ev.targetEntityId;
+        }
+        eventsEl.appendChild(elAttr(doc, 'Event', evAttr));
+      }
+      phaseEl.appendChild(eventsEl);
+    }
+    
+    if (phase.entityStates && phase.entityStates.length > 0) {
+      const statesEl = doc.createElement('EntityStates');
+      for (const st of phase.entityStates) {
+        const stAttr: Record<string, string> = {
+          entityId: st.entityId,
+          status: st.status
+        };
+        if (st.detectionRange !== undefined) stAttr.detectionRange = String(st.detectionRange);
+        if (st.attackTarget) stAttr.attackTarget = st.attackTarget;
+        
+        const stEl = elAttr(doc, 'EntityState', stAttr);
+        stEl.appendChild(elAttr(doc, 'Position', {
+          longitude: String(st.position.longitude),
+          latitude: String(st.position.latitude),
+          altitude: String(st.position.altitude ?? 0)
+        }));
+        statesEl.appendChild(stEl);
+      }
+      phaseEl.appendChild(statesEl);
+    }
+    
+    phasesEl.appendChild(phaseEl);
+  }
+  root.appendChild(phasesEl);
+}
+
 export class XmlScenarioExporter {
   /**
    * 将 TacticalScenario 导出为 XML 字符串
    */
   export(scenario: TacticalScenario): string {
+    scenario = normalizeTacticalScenario(scenario);
+
     const doc = document.implementation.createDocument(null, 'Scenario', null);
     const root = doc.documentElement;
+
+    if (scenario.id) root.setAttribute('id', scenario.id);
+    if (scenario.version !== undefined) root.setAttribute('version', String(scenario.version));
+
+    if (scenario.summary) {
+      root.appendChild(el(doc, 'Summary', scenario.summary));
+    }
 
     // 1. Metadata
     if (scenario.scenarioMetadata) {
@@ -400,10 +604,13 @@ export class XmlScenarioExporter {
     }
 
     // 2. SimulationParameters
-    if (scenario.metadata.startTime || scenario.metadata.endTime) {
+    if (scenario.metadata) {
       const simEl = doc.createElement('SimulationParameters');
       if (scenario.metadata.startTime) simEl.appendChild(el(doc, 'StartTime', scenario.metadata.startTime));
       if (scenario.metadata.endTime) simEl.appendChild(el(doc, 'EndTime', scenario.metadata.endTime));
+      if (scenario.metadata.generatedAt) simEl.appendChild(el(doc, 'GeneratedAt', scenario.metadata.generatedAt));
+      if (scenario.metadata.modelUsed) simEl.appendChild(el(doc, 'ModelUsed', scenario.metadata.modelUsed));
+      if (scenario.metadata.confidence !== undefined) simEl.appendChild(el(doc, 'Confidence', String(scenario.metadata.confidence)));
       root.appendChild(simEl);
     }
 
@@ -423,6 +630,26 @@ export class XmlScenarioExporter {
     // 6. Interactions
     if (scenario.interactions) {
       exportInteractions(doc, root, scenario.interactions);
+    }
+
+    // 7. Routes
+    if (scenario.routes?.length) {
+      exportRoutes(doc, root, scenario.routes);
+    }
+
+    // 8. DetectionZones
+    if (scenario.detectionZones?.length) {
+      exportDetectionZones(doc, root, scenario.detectionZones);
+    }
+
+    // 9. StrikeTasks
+    if (scenario.strikeTasks?.length) {
+      exportStrikeTasks(doc, root, scenario.strikeTasks);
+    }
+
+    // 10. Phases
+    if (scenario.phases?.length) {
+      exportPhases(doc, root, scenario.phases);
     }
 
     const serializer = new XMLSerializer();

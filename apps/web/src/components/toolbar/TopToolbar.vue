@@ -107,6 +107,6 @@ function handleResourceRightClick() {
 }
 
 .toolbar--right {
-  right: 16px;
+  right: 11%;
 }
 </style>

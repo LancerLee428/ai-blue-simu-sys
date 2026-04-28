@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   ExecutionStatus,
   Phase,
+  EnvironmentConfig,
 } from '../types/tactical-scenario';
 import { AiTacticalService } from '../services/ai-tactical';
 import { TacticalValidator } from '../services/tactical-validator';
@@ -310,6 +311,15 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     );
   }
 
+  function updateEnvironment(environment: EnvironmentConfig) {
+    if (!currentScenario.value) return;
+    currentScenario.value = {
+      ...currentScenario.value,
+      environment,
+    };
+    addSystemMessage('环境配置已更新');
+  }
+
   // --- 导出操作 ---
 
   async function exportToWord() {
@@ -351,5 +361,6 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     clearHistory,
     exportToWord,
     loadScenario,
+    updateEnvironment,
   };
 });

@@ -1,0 +1,32 @@
+{
+  "name": "ai-blue-simu-sys",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:web": "npm --workspace @ai-blue-simu-sys/web run dev",
+    "dev:server": "npm --workspace @ai-blue-simu-sys/server run dev",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "commitlint": "commitlint --edit"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.2",
+    "@commitlint/config-conventional": "^20.5.0",
+    "@types/node": "^25.6.0",
+    "husky": "^9.1.7",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.8",
+    "vite-plugin-cesium": "^1.2.23"
+  },
+  "dependencies": {
+    "@types/file-saver": "^2.0.7",
+    "docx": "^9.6.1",
+    "file-saver": "^2.0.5"
+  }
+}

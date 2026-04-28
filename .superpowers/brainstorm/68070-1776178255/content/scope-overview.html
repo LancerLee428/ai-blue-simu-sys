@@ -1,0 +1,61 @@
+<h2>AI 助手功能范围分解</h2>
+<p class="subtitle">你的需求可拆分为 4 个独立子项目，按顺序构建，逐步集成</p>
+
+<div class="section">
+  <h3>🔹 Phase 1：对话式方案生成</h3>
+  <p>AI 理解战术意图 → 输出结构化想定 JSON（兵力、路线、探测范围）</p>
+  <ul>
+    <li>对话式 LLM 接口（RAG + Prompt Engineering）</li>
+    <li>结构化输出解析（JSON Schema 验证）</li>
+    <li>想定数据模型设计</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>🔹 Phase 2：地图可视化渲染</h3>
+  <p>将 AI 生成的方案渲染到 Cesium 地图上</p>
+  <ul>
+    <li>实体部署（红蓝双方兵力图标）</li>
+    <li>进攻路线绘制（箭头线）</li>
+    <li>探测范围可视化（圆形/椭圆覆盖）</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>🔹 Phase 3：行动计划执行引擎</h3>
+  <p>让地图上的实体按照 AI 生成的计划执行</p>
+  <ul>
+    <li>时间轴/阶段定义</li>
+    <li>实体移动动画</li>
+    <li>打击/探测事件触发</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h3>🔹 Phase 4：交互式调整与反馈</h3>
+  <p>用户可修改 AI 方案并重新生成</p>
+  <ul>
+    <li>地图上直接拖拽调整部署</li>
+    <li>对话式追问修改</li>
+    <li>多方案对比</li>
+  </ul>
+</div>
+
+<div class="pros-cons" style="margin-top: 32px;">
+  <div class="pros">
+    <h4>推荐策略</h4>
+    <ul>
+      <li><strong>Phase 1 → 2</strong>：MVP 可独立验证价值</li>
+      <li>地图渲染已有基础（Cesium 已集成）</li>
+      <li>每阶段有清晰的完成标准</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>全量风险</h4>
+    <ul>
+      <li>范围过宽容易半途而废</li>
+      <li>Phase 3/4 复杂度指数级上升</li>
+      <li>建议先完成 Phase 1-2 验证核心价值</li>
+    </ul>
+  </div>
+</div>

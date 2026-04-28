@@ -1,0 +1,22 @@
+{
+  "name": "@ai-blue-simu-sys/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
+    "jsonrepair": "^3.14.0",
+    "pinia": "^3.0.4",
+    "strip-json-comments": "^5.0.3",
+    "vue": "^3.5.32",
+    "vue-router": "^5.0.4"
+  },
+  "devDependencies": {
+    "vite": "^8.0.8"
+  }
+}

@@ -1,0 +1,527 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scenario>
+
+  <!-- ========================================================================
+       1. 想定元数据
+  ========================================================================= -->
+  <Metadata>
+    <!-- 基本信息 -->
+    <Name>XX型侦察卫星在轨想定</Name>
+    <Version>V1.2</Version>
+    <Description>面向XX型侦察卫星光学载荷性能鉴定的在轨仿真想定。</Description>
+
+    <!-- 来源与归属 -->
+    <TaskSource>XX型号任务书</TaskSource>
+    <CreateUnit>某试验中心</CreateUnit>
+    <Author>张三</Author>
+    <CreateTime>2026-03-01T09:00:00+08:00</CreateTime>
+    <ModifyTime>2026-03-26T14:30:00+08:00</ModifyTime>
+
+    <!-- 分类标签 -->
+    <Category>航天装备鉴定</Category>
+    <Tags>
+      <Tag>侦察卫星</Tag>
+      <Tag>光学载荷</Tag>
+      <Tag>在轨试验</Tag>
+    </Tags>
+  </Metadata>
+
+  <!-- ========================================================================
+       2. 仿真参数
+  ========================================================================= -->
+  <SimulationParameters>
+    <!-- 仿真开始时间 -->
+    <StartTime>2025-11-15T09:00:00Z</StartTime>
+    <!-- 仿真结束 -->
+    <EndTime>2025-11-17T09:00:00Z</EndTime>
+  </SimulationParameters>
+
+  <!-- ========================================================================
+       3. 被试装备配置
+  ========================================================================= -->
+  <Participating>
+
+    <Equipment id="equip_dut_001">
+      <Name>XX型侦察卫星</Name>
+      <ModelId>hetero_dut_001</ModelId>
+      <ModelType>外部异构</ModelType>
+      <InterfaceProtocol>HLA-IEEE1516e</InterfaceProtocol>
+      <FederateName>XxReconSat_Federate</FederateName>
+
+      <!-- 组件列表 -->
+      <Components>
+        <Component id="comp_mover_001">
+          <Name>机动组件</Name>
+          <Type>space_mover</Type>
+          <!-- 初始轨道状态（TLE 或开普勒根数） -->
+          <InitialState>
+            <OrbitType>Keplerian</OrbitType>
+            <SemiMajorAxis unit="km">6971.0</SemiMajorAxis>
+            <Eccentricity>0.001</Eccentricity>
+            <Inclination unit="deg">55.0</Inclination>
+            <RAAN unit="deg">120.5</RAAN>
+            <ArgOfPerigee unit="deg">30.0</ArgOfPerigee>
+            <TrueAnomaly unit="deg">0.0</TrueAnomaly>
+            <Epoch>2025-11-15T09:00:00Z</Epoch>
+          </InitialState>
+        </Component>
+
+        <Component id="comp_opt_001">
+          <Name>光学传感器</Name>
+          <Type>sensor_optical</Type>
+          <PerformanceParams>
+            <Param key="maxDetectRange"   unit="km">1500</Param>
+            <Param key="groundResolution" unit="m">0.3</Param>
+            <Param key="swathWidth"       unit="km">20</Param>
+            <Param key="frameRate"        unit="fps">10</Param>
+          </PerformanceParams>
+          <DynamicParams>
+            <Param key="scanRate"         unit="deg/s">3.0</Param>
+            <Param key="rollAngleRange"   unit="deg">±30</Param>
+            <Param key="workingPower"     unit="W">120</Param>
+          </DynamicParams>
+          <InitialParams>
+            <Param key="boresightPointing">Nadir</Param>
+            <Param key="workingState">Off</Param>
+          </InitialParams>
+        </Component>
+
+        <Component id="comp_adcs_001">
+          <Name>姿态控制模块</Name>
+          <Type>maneuver_adcs</Type>
+          <PerformanceParams>
+            <Param key="pointingAccuracy" unit="arcsec">5.0</Param>
+            <Param key="stabilityRate"    unit="arcsec/s">0.1</Param>
+          </PerformanceParams>
+          <InitialParams>
+            <Param key="mode">Normal</Param>
+          </InitialParams>
+        </Component>
+
+        <Component id="comp_comm_001">
+          <Name>Ka频段通信模块</Name>
+          <Type>comm_ka</Type>
+          <PerformanceParams>
+            <Param key="frequency"    unit="GHz">26.5~40</Param>
+            <Param key="txPower"      unit="W">50</Param>
+            <Param key="antennaGain"  unit="dBi">42</Param>
+            <Param key="downlinkRate" unit="Gbps">1.2</Param>
+          </PerformanceParams>
+          <InitialParams>
+            <Param key="mode">Standby</Param>
+          </InitialParams>
+        </Component>
+
+        <Component id="comp_eps_001">
+          <Name>电源管理模块</Name>
+          <Type>support_eps</Type>
+          <PerformanceParams>
+            <Param key="solarPanelArea"  unit="m2">12.5</Param>
+            <Param key="batteryCapacity" unit="Wh">2400</Param>
+          </PerformanceParams>
+          <InitialParams>
+            <Param key="batterySOC" unit="%">95</Param>
+          </InitialParams>
+        </Component>
+      </Components>
+
+      <!-- 任务配置（见第6节） -->
+      <TaskRef taskId="task_dut_001"/>
+    </Equipment>
+
+  </Participating>
+
+  <!-- ========================================================================
+       4. 陪试装备配置
+  ========================================================================= -->
+  <Supporting>
+
+    <!-- 陪试装备1：目标地面站 -->
+    <Equipment id="equip_sup_001">
+      <Name>地面接收站A</Name>
+      <ModelId>inst_groundstation</ModelId>
+      <ModelType>同构</ModelType>
+
+      <Components>
+        <Component id="comp_mover_001">
+          <Name>机动组件</Name>
+          <Type>faclity_mover</Type>
+          <!-- 初始部署位置（经纬高） -->
+          <InitialState>
+            <PositionType>Geodetic</PositionType>
+            <Longitude unit="deg">116.4</Longitude>
+            <Latitude  unit="deg">39.9</Latitude>
+            <Altitude  unit="m">50</Altitude>
+          </InitialState>
+        </Component>
+
+        <Component id="comp_recv_001">
+          <Name>Ka频段接收天线</Name>
+          <Type>comm_ka</Type>
+          <PerformanceParams>
+            <Param key="antennaGain" unit="dBi">45</Param>
+            <Param key="noiseFigure" unit="dB">2.5</Param>
+          </PerformanceParams>
+          <InitialParams>
+            <Param key="trackingMode">Auto</Param>
+          </InitialParams>
+        </Component>
+      </Components>
+
+      <TaskRef taskId="task_sup_001"/>
+    </Equipment>
+
+  </Supporting>
+
+  <!-- ========================================================================
+       5. 环境配置
+  ========================================================================= -->
+  <Environment>
+
+    <!-- 5.1 环境生成模型 -->
+    <GenerationModels>
+
+      <SpaceEnvironment>
+        <!-- 太阳活动水平 -->
+        <SolarActivity>
+          <FluxLevel unit="sfu">130</FluxLevel>
+          <SunspotNumber>45</SunspotNumber>
+        </SolarActivity>
+        <!-- 地磁活动指数 -->
+        <GeomagneticField>
+          <KpIndex>3</KpIndex>
+          <ApIndex>12</ApIndex>
+        </GeomagneticField>
+        <!-- 电离层模型参数 -->
+        <Ionosphere>
+          <ModelType>IRI-2020</ModelType>
+          <TotalElectronContent unit="TECU">30.5</TotalElectronContent>
+        </Ionosphere>
+        <!-- 空间环境数据空间分辨率（经纬度网格间距，单位：度；高度分层，单位：km） -->
+        <DataResolution>
+          <LatitudeStep  unit="deg">1.0</LatitudeStep>
+          <LongitudeStep unit="deg">1.0</LongitudeStep>
+          <AltitudeStep  unit="km">50</AltitudeStep>
+        </DataResolution>
+        <!-- 空间环境仿真步长（单位：秒），即环境参数更新时间间隔 -->
+        <TimeStep unit="s">600</TimeStep>
+        <!-- 模型服务地址 -->
+        <ModelServiceUrl>http://env.simcenter.com/space/model</ModelServiceUrl>
+        <!-- 空间环境数据生成地址 -->
+        <DataGenerationUrl>ftp://data.simcenter.com/scenario/SCN-2024-001/space/</DataGenerationUrl>
+      </SpaceEnvironment>
+
+      <AtmosphereModel>
+        <!-- 天气状况：晴、多云、雨、雾等 -->
+        <Weather>多云</Weather>
+        <!-- 降雨等级：无雨、小雨、中雨、大雨 -->
+        <RainLevel>无雨</RainLevel>
+        <!-- 风速，单位米/秒 -->
+        <WindSpeed unit="m/s">5.0</WindSpeed>
+        <!-- 风向，单位度（0=北风，90=东风） -->
+        <WindDirection unit="deg">120</WindDirection>
+        <!-- 大气环境数据分布范围 -->
+        <CoverageArea>
+          <LonMin unit="deg">110.0</LonMin>
+          <LonMax unit="deg">125.0</LonMax>
+          <LatMin unit="deg">35.0</LatMin>
+          <LatMax unit="deg">45.0</LatMax>
+        </CoverageArea>
+        <!-- 大气环境数据空间分辨率（经纬度网格间距，单位：度） -->
+        <DataResolution>
+          <LatitudeStep  unit="deg">0.05</LatitudeStep>
+          <LongitudeStep unit="deg">0.05</LongitudeStep>
+          <AltitudeStep  unit="m">500</AltitudeStep>
+        </DataResolution>
+        <!-- 大气环境仿真步长（单位：秒），即环境场更新时间间隔 -->
+        <TimeStep unit="s">300</TimeStep>
+        <!-- 模型服务地址 -->
+        <ModelServiceUrl>http://env.simcenter.com/space/model</ModelServiceUrl>
+        <!-- 环境数据生成地址：存放生成的环境场数据文件 -->
+        <DataGenerationUrl>ftp://data.simcenter.com/scenario/SCN-2024-001/atmosphere/</DataGenerationUrl>
+      </AtmosphereModel>
+
+    </GenerationModels>
+
+    <!-- 5.2 环境效应模型 -->
+    <EffectModels>
+
+      <!-- 电磁波传输效应 -->
+      <EffectModel id="em_atten_001" category="电磁波传输效应">
+        <Name>电磁波传输空间自由衰减效应模型</Name>
+        <Enabled>true</Enabled>
+        <Params>
+          <Param key="frequencyBand">Ka</Param>
+        </Params>
+      </EffectModel>
+
+      <EffectModel id="em_atmos_001" category="电磁波传输效应">
+        <Name>电磁波传输大气吸收损耗效应模型</Name>
+        <Enabled>true</Enabled>
+        <Params>
+          <Param key="rainfallRate" unit="mm/h">5</Param>
+          <Param key="humidity"     unit="%">60</Param>
+        </Params>
+      </EffectModel>
+
+      <EffectModel id="em_refrac_001" category="电磁波传输效应">
+        <Name>电磁波传输折射效应模型</Name>
+        <Enabled>false</Enabled>
+      </EffectModel>
+
+      <!-- 空间环境效应 -->
+      <EffectModel id="space_rad_001" category="空间环境效应">
+        <Name>辐射带电离辐射效应模型</Name>
+        <Enabled>true</Enabled>
+        <Params>
+          <Param key="totalDoseThreshold" unit="krad">20</Param>
+        </Params>
+      </EffectModel>
+
+      <!-- 光学传输效应 -->
+      <EffectModel id="opt_trans_001" category="可见光传输效应">
+        <Name>大气散射MTF效应模型</Name>
+        <Enabled>true</Enabled>
+        <Params>
+          <Param key="turbulenceCn2">1e-14</Param>
+        </Params>
+      </EffectModel>
+
+    </EffectModels>
+
+    <!-- 5.3 环境事件 -->
+    <Events>
+      <Event id="evt_001">
+        <Name>电磁干扰事件</Name>
+        <StartTime>2025-11-15T10:00:00Z</StartTime>
+        <EndTime>2025-11-15T11:00:00Z</EndTime>
+        <Type>电磁干扰</Type>
+        <Level>3</Level>
+        <AffectedArea>
+          <LonMin unit="deg">115.0</LonMin>
+          <LonMax unit="deg">120.0</LonMax>
+          <LatMin unit="deg">38.0</LatMin>
+          <LatMax unit="deg">42.0</LatMax>
+        </AffectedArea>
+        <Params>
+          <Param key="jamPower" unit="dBW">40</Param>
+        </Params>
+      </Event>
+
+      <Event id="evt_002">
+        <Name>强对流天气事件</Name>
+        <StartTime>2025-11-16T14:00:00Z</StartTime>
+        <EndTime>2025-11-16T18:00:00Z</EndTime>
+        <Type>强对流天气</Type>
+        <Level>2</Level>
+        <Params>
+          <Param key="rainfallRate"  unit="mm/h">30</Param>
+          <Param key="windSpeed"     unit="m/s">25</Param>
+          <Param key="cloudCoverage" unit="%">95</Param>
+        </Params>
+      </Event>
+    </Events>
+
+  </Environment>
+
+  <!-- ========================================================================
+       6. 任务配置
+       行为配置类型：BehaviorTree（行为树）/ StateMachine（状态机）/ InstructionSeq（指令序列）
+  ========================================================================= -->
+  <Tasks>
+
+    <!-- 被试装备任务：光学侦察卫星行为树 -->
+    <Task id="task_dut_001" equipRef="equip_dut_001" type="BehaviorTree">
+      <Name>XX型侦察卫星任务行为树</Name>
+
+      <!-- 行为树根节点（Sequence / Selector / Parallel） -->
+      <BehaviorTree>
+        <Root type="Sequence" name="卫星主任务序列">
+
+          <!-- 轨道机动节点 -->
+          <ActionNode name="轨道机动_抵近" component="maneuver_adcs">
+            <Params>
+              <!-- 速度增量（由任务规划工具计算，坐标系：VVLH） -->
+              <Param key="deltaV_x"     unit="m/s">0.0</Param>
+              <Param key="deltaV_y"     unit="m/s">-2.3</Param>
+              <Param key="deltaV_z"     unit="m/s">0.0</Param>
+              <Param key="coordSystem">VVLH</Param>
+              <Param key="maneuverType">CW_Approach</Param>
+              <Param key="burnDuration" unit="s">8.5</Param>
+            </Params>
+          </ActionNode>
+
+          <!-- 条件节点：判断是否过顶 -->
+          <Selector name="过顶判断">
+            <ConditionNode name="判断俯仰角">
+              <Params>
+                <Param key="targetId">equip_sup_002</Param>
+                <Param key="minElevation" unit="deg">30.0</Param>
+              </Params>
+            </ConditionNode>
+            <ActionNode name="等待过顶时机" component="support_eps">
+              <Params>
+                <Param key="waitDuration" unit="s">60</Param>
+              </Params>
+            </ActionNode>
+          </Selector>
+
+          <!-- 开启载荷成像 -->
+          <ActionNode name="开启光学成像" component="sensor_optical">
+            <Params>
+              <Param key="targetId">equip_sup_002</Param>
+              <Param key="imagingDuration" unit="s">120</Param>
+              <Param key="imagingMode">Pushbroom</Param>
+              <Param key="compressionRatio">4</Param>
+            </Params>
+          </ActionNode>
+
+          <!-- 数据回传 -->
+          <ActionNode name="数据回传至地面站" component="comm_ka">
+            <Params>
+              <Param key="targetId">equip_sup_001</Param>
+              <Param key="dataVolume" unit="GB">2.4</Param>
+              <Param key="txPower"    unit="W">50</Param>
+            </Params>
+          </ActionNode>
+
+        </Root>
+      </BehaviorTree>
+    </Task>
+
+    <!-- 陪试装备任务：地面站状态机 -->
+    <Task id="task_sup_001" equipRef="equip_sup_001" type="StateMachine">
+      <Name>地面接收站状态机</Name>
+
+      <StateMachine initialState="Standby">
+
+        <State name="Standby">
+          <Transition event="SatelliteInView" target="Tracking"/>
+        </State>
+
+        <State name="Tracking">
+          <EntryAction component="comm_ka">
+            <Params>
+              <Param key="trackingMode">Auto</Param>
+            </Params>
+          </EntryAction>
+          <Transition event="LinkEstablished"    target="Receiving"/>
+          <Transition event="SatelliteOutOfView" target="Standby"/>
+        </State>
+
+        <State name="Receiving">
+          <EntryAction component="comm_ka">
+            <Params>
+              <Param key="mode">Receive</Param>
+              <Param key="recordData">true</Param>
+            </Params>
+          </EntryAction>
+          <Transition event="TransferComplete" target="Processing"/>
+          <Transition event="LinkLost"         target="Standby"/>
+        </State>
+
+        <State name="Processing">
+          <Transition event="ProcessingDone" target="Standby"/>
+        </State>
+
+      </StateMachine>
+    </Task>
+
+    <!-- 指令序列示例 -->
+    <Task id="task_seq_001" equipRef="equip_dut_001" type="InstructionSeq">
+      <Name>XX型侦察卫星指令序列</Name>
+
+      <InstructionSequence>
+        <!-- 指令1：轨道机动 -->
+        <Instruction id="ins_001" time="T+0h:10m:00s">
+          <Type>OrbitManeuver</Type>
+          <Component>maneuver_adcs</Component>
+          <Params>
+            <Param key="deltaV_x"    unit="m/s">0.0</Param>
+            <Param key="deltaV_y"    unit="m/s">-2.3</Param>
+            <Param key="deltaV_z"    unit="m/s">0.0</Param>
+            <Param key="coordSystem">VVLH</Param>
+          </Params>
+        </Instruction>
+
+        <!-- 指令2：开机成像 -->
+        <Instruction id="ins_002" time="T+0h:45m:30s">
+          <Type>SensorPowerOn</Type>
+          <Component>sensor_optical</Component>
+          <Params>
+            <Param key="mode">Imaging</Param>
+            <Param key="duration" unit="s">120</Param>
+          </Params>
+        </Instruction>
+
+        <!-- 指令3：姿态机动 -->
+        <Instruction id="ins_003" time="T+0h:44m:00s">
+          <Type>AttitudeManeuver</Type>
+          <Component>maneuver_adcs</Component>
+          <Params>
+            <Param key="rollAngle"  unit="deg">-15.0</Param>
+            <Param key="pitchAngle" unit="deg">0.0</Param>
+            <Param key="yawAngle"   unit="deg">0.0</Param>
+            <Param key="slewRate"   unit="deg/s">2.0</Param>
+          </Params>
+        </Instruction>
+
+        <!-- 指令4：关机 -->
+        <Instruction id="ins_004" time="T+0h:47m:30s">
+          <Type>SensorPowerOff</Type>
+          <Component>sensor_optical</Component>
+          <Params/>
+        </Instruction>
+
+      </InstructionSequence>
+    </Task>
+
+  </Tasks>
+
+  <!-- ========================================================================
+       7. 交互配置
+  ========================================================================= -->
+  <Interactions>
+
+    <!-- 编组关系 -->
+    <Groups>
+      <Group id="grp_001" name="侦察编队">
+        <Member equipRef="equip_dut_001" role="主星"/>
+        <Member equipRef="equip_sup_001" role="地面站"/>
+      </Group>
+    </Groups>
+
+    <!-- 指控关系 -->
+    <CommandControl>
+      <Link id="cc_001">
+        <Commander   equipRef="equip_sup_001"/>
+        <Subordinate equipRef="equip_dut_001"/>
+        <Protocol>遥控上行链路</Protocol>
+        <Latency unit="ms">250</Latency>
+      </Link>
+    </CommandControl>
+
+    <!-- 通信关系 -->
+    <Communications>
+      <Link id="comm_001">
+        <Sender   equipRef="equip_dut_001" component="comp_comm_001"/>
+        <Receiver equipRef="equip_sup_001" component="comp_recv_001"/>
+        <DataType>遥测+图像数据</DataType>
+        <Protocol>Ka频段下行</Protocol>
+        <MaxRange unit="km">2000</MaxRange>
+        <DataRate unit="Gbps">1.2</DataRate>
+      </Link>
+    </Communications>
+
+    <!-- 探测/感知关系 -->
+    <DetectionLinks>
+      <Link id="det_001">
+        <Observer equipRef="equip_dut_001" component="comp_opt_001"/>
+        <Target   equipRef="equip_sup_002"/>
+        <SensorType>optical</SensorType>
+      </Link>
+    </DetectionLinks>
+
+  </Interactions>
+
+</Scenario>

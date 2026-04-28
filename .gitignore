@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.npm-cache/
+.pnpm-store/
+.DS_Store
+.worktrees/
+.env.local
+apps/web/.env.local
+data-example

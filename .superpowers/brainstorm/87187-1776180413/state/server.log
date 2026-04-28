@@ -1,0 +1,3 @@
+{"type":"server-started","port":51497,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:51497","screen_dir":"/Users/lancer/code/15s/ai-blue-simu-sys/.worktrees/workbench-redesign/.superpowers/brainstorm/87187-1776180413/content","state_dir":"/Users/lancer/code/15s/ai-blue-simu-sys/.worktrees/workbench-redesign/.superpowers/brainstorm/87187-1776180413/state"}
+{"type":"screen-added","file":"/Users/lancer/code/15s/ai-blue-simu-sys/.worktrees/workbench-redesign/.superpowers/brainstorm/87187-1776180413/content/approach-proposal.html"}
+{"type":"server-stopped","reason":"idle timeout"}

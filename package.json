@@ -5,16 +5,20 @@
   "scripts": {
     "dev:web": "npm --workspace @ai-blue-simu-sys/web run dev",
     "dev:server": "npm --workspace @ai-blue-simu-sys/server run dev",
-    "dev": "npm run dev:server & npm run dev:web",
+    "dev": "node scripts/dev.mjs",
     "build": "npm run build --workspaces",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces",
+    "commitlint": "commitlint --edit"
   },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "devDependencies": {
+    "@commitlint/cli": "^20.5.2",
+    "@commitlint/config-conventional": "^20.5.0",
     "@types/node": "^25.6.0",
+    "husky": "^9.1.7",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vite": "^8.0.8",

@@ -6,6 +6,7 @@ import type { ActionPlan } from '../../stores/action-plan';
 const props = defineProps<{
   plan: ActionPlan;
   isActive: boolean;
+  showExecutionControls?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -166,7 +167,7 @@ function getStatusLabel(status: string): string {
       </div>
 
       <!-- 推演控制条 -->
-      <div class="execution-bar">
+      <div v-if="props.showExecutionControls !== false" class="execution-bar">
         <div class="exec-time">{{ formatTime(plan.executionState.currentTime) }}</div>
         <div class="exec-controls">
           <button class="ctrl-btn" @click="emit('prevPhase')" title="上一阶段">⏮</button>

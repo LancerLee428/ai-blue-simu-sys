@@ -14,16 +14,19 @@ const {
 interface Props {
   canUndo?: boolean;
   canRedo?: boolean;
+  simulationOpen?: boolean;
 }
 
 withDefaults(defineProps<Props>(), {
   canUndo: false,
   canRedo: false,
+  simulationOpen: false,
 });
 
 const emit = defineEmits<{
   (e: 'undo'): void;
   (e: 'redo'): void;
+  (e: 'toggle-simulation'): void;
 }>();
 
 function handleAIRightClick() {
@@ -72,6 +75,13 @@ function handleResourceRightClick() {
   <!-- Right toolbar -->
   <div class="toolbar toolbar--right">
     <ToolbarButton
+      :active="simulationOpen"
+      icon="▤"
+      @click="emit('toggle-simulation')"
+    >
+      仿真推演
+    </ToolbarButton>
+    <ToolbarButton
       :active="rightPanelOpen && rightPanelActiveTab === 'ai'"
       icon="◆"
       @click="handleAIRightClick"
@@ -92,7 +102,7 @@ function handleResourceRightClick() {
 .toolbar {
   position: fixed;
   top: 16px;
-  z-index: 100;
+  z-index: 1160;
   display: flex;
   gap: 8px;
 }

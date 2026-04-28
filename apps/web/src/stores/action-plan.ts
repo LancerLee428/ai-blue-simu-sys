@@ -11,6 +11,7 @@ export interface ActionPlan {
   executionState: {
     status: ExecutionStatus;
     currentTime: number;
+    currentPhaseIndex: number;
     speed: number;
   };
 }
@@ -36,6 +37,7 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
       executionState: {
         status: 'idle',
         currentTime: 0,
+        currentPhaseIndex: 0,
         speed: 1,
       },
     };
@@ -104,6 +106,10 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
         plans.value = parsed.map((p: any) => ({
           ...p,
           createdAt: new Date(p.createdAt),
+          executionState: {
+            currentPhaseIndex: 0,
+            ...p.executionState,
+          },
         }));
         if (plans.value.length > 0) {
           activePlanId.value = plans.value[0].id;

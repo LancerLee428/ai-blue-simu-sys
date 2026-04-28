@@ -188,6 +188,7 @@ defineExpose({ initEngine, setRouteDecisions, openEnvironmentDialog, toggleEvent
           :key="plan.id"
           :plan="plan"
           :is-active="plan.id === actionPlanStore.activePlanId"
+          :show-execution-controls="false"
           @activate="actionPlanStore.activatePlan(plan.id)"
           @delete="actionPlanStore.deletePlan(plan.id)"
           @play="handlePlay"

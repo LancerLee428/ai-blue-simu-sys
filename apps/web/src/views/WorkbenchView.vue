@@ -13,6 +13,7 @@ import RightPanelModule from '../components/right-panel/RightPanelModule.vue';
 import DeploymentConfigModal from '../components/deployment/DeploymentConfigModal.vue';
 import LeftSidebar from '../components/left-sidebar/LeftSidebar.vue';
 import DecisionPanel from '../components/simulation/DecisionPanel.vue';
+import SimulationDrawer from '../components/simulation/SimulationDrawer.vue';
 import { MapRenderer } from '../services/map-renderer';
 import { ExecutionEngine } from '../services/execution-engine';
 import { useTacticalScenarioStore } from '../stores/tactical-scenario';
@@ -27,12 +28,13 @@ const { execute, undo, redo, canUndo, canRedo } = useCommandSystem();
 
 // ExecutionEngine and LeftSidebar refs
 const leftSidebarRef = ref<InstanceType<typeof LeftSidebar> | null>(null);
-const executionEngineRef = ref<typeof ExecutionEngine | null>(null);
+const executionEngineRef = ref<ExecutionEngine | null>(null);
 const mapRendererRef = ref<MapRenderer | null>(null);
 
 // 决策面板状态
 const selectedRouteId = ref<string | null>(null);
 const routeDecisions = ref<Map<string, RouteDecision>>(new Map());
+const showSimulationDrawer = ref(false);
 
 // 组件卸载时清理
 onUnmounted(() => {
@@ -53,6 +55,60 @@ function handleUndo() {
 
 function handleRedo() {
   redo();
+}
+
+function syncExecutionStateFromEngine() {
+  const activePlanId = actionPlanStore.activePlanId;
+  const engine = executionEngineRef.value;
+  if (!activePlanId || !engine) return;
+
+  const state = engine.getStatus();
+  actionPlanStore.updateExecutionState(activePlanId, {
+    status: state.status,
+    currentTime: state.currentTime,
+    currentPhaseIndex: state.currentPhaseIndex,
+    speed: state.speed,
+  });
+}
+
+function handleSimulationPlay() {
+  executionEngineRef.value?.play();
+  syncExecutionStateFromEngine();
+}
+
+function handleSimulationPause() {
+  executionEngineRef.value?.pause();
+  syncExecutionStateFromEngine();
+}
+
+function handleSimulationReset() {
+  executionEngineRef.value?.stop();
+  syncExecutionStateFromEngine();
+}
+
+function handleSimulationStepForward(stepSeconds: number) {
+  executionEngineRef.value?.step(stepSeconds);
+  syncExecutionStateFromEngine();
+}
+
+function handleSimulationStepBackward(stepSeconds: number) {
+  executionEngineRef.value?.step(-stepSeconds);
+  syncExecutionStateFromEngine();
+}
+
+function handleSimulationPrevPhase() {
+  executionEngineRef.value?.prevPhase();
+  syncExecutionStateFromEngine();
+}
+
+function handleSimulationNextPhase() {
+  executionEngineRef.value?.nextPhase();
+  syncExecutionStateFromEngine();
+}
+
+function handleSimulationSetSpeed(speed: number) {
+  executionEngineRef.value?.setSpeed(speed);
+  syncExecutionStateFromEngine();
 }
 
 // 部署配置弹窗状态
@@ -105,7 +161,13 @@ function handleViewerReady(viewer: Cesium.Viewer) {
   engine.setOnStatusChange((status) => {
     const activePlanId = actionPlanStore.activePlanId;
     if (activePlanId) {
-      actionPlanStore.updateExecutionState(activePlanId, { status });
+      const state = engine.getStatus();
+      actionPlanStore.updateExecutionState(activePlanId, {
+        status,
+        currentTime: state.currentTime,
+        currentPhaseIndex: state.currentPhaseIndex,
+        speed: state.speed,
+      });
     }
   });
 
@@ -113,7 +175,7 @@ function handleViewerReady(viewer: Cesium.Viewer) {
   engine.setOnProgressUpdate(({ currentTime, progress, currentPhaseIndex }) => {
     const activePlanId = actionPlanStore.activePlanId;
     if (activePlanId) {
-      actionPlanStore.updateExecutionState(activePlanId, { currentTime });
+      actionPlanStore.updateExecutionState(activePlanId, { currentTime, currentPhaseIndex });
     }
   });
 }
@@ -223,8 +285,10 @@ const scenarioEntities = computed(() => {
     <TopToolbar
       :can-undo="canUndo"
       :can-redo="canRedo"
+      :simulation-open="showSimulationDrawer"
       @undo="handleUndo"
       @redo="handleRedo"
+      @toggle-simulation="showSimulationDrawer = !showSimulationDrawer"
     />
 
     <!-- Left panel: action plan management -->
@@ -237,6 +301,20 @@ const scenarioEntities = computed(() => {
     <DecisionPanel
       :selected-route-id="selectedRouteId"
       :decisions="routeDecisions"
+    />
+
+    <SimulationDrawer
+      :open="showSimulationDrawer"
+      :plan="actionPlanStore.activePlan"
+      @close="showSimulationDrawer = false"
+      @play="handleSimulationPlay"
+      @pause="handleSimulationPause"
+      @reset="handleSimulationReset"
+      @step-forward="handleSimulationStepForward"
+      @step-backward="handleSimulationStepBackward"
+      @prev-phase="handleSimulationPrevPhase"
+      @next-phase="handleSimulationNextPhase"
+      @set-speed="handleSimulationSetSpeed"
     />
 
     <!-- 部署配置弹窗 -->

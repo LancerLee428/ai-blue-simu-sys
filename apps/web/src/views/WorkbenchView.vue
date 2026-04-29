@@ -267,6 +267,9 @@ const scenarioEntities = computed(() => {
     category: entity.category,
     currentPosition: entity.currentPosition,
     currentStatus: entity.currentStatus,
+    forceSide: entity.forceSide,
+    platformType: entity.platformType,
+    modelId: entity.modelId,
   }));
 });
 </script>
@@ -328,6 +331,7 @@ const scenarioEntities = computed(() => {
       :visible="showDeploymentModal"
       mode="create"
       :source-entity-id="deploymentConfig?.sourceEntityId"
+      :source-entity-name="deploymentConfig?.sourceEntityName"
       :initial-position="deploymentConfig?.position"
       @confirm="handleDeploymentConfirm"
       @cancel="handleDeploymentCancel"

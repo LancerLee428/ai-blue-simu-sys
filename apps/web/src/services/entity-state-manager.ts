@@ -34,6 +34,10 @@ export class EntityStateManager {
       sourceEntityId: config.sourceEntityId,
       name: config.name,
       category: 'platform', // 从源实体获取
+      forceSide: config.forceSide ?? 'red',
+      platformType: config.platformType ?? 'facility-command',
+      modelId: config.modelId,
+      speed: config.speed,
 
       // 位置信息 - 稳定存储，不再随机
       currentPosition: {
@@ -42,7 +46,7 @@ export class EntityStateManager {
         altitude: config.position.altitude,
       },
 
-      currentStatus: 'planned',
+      currentStatus: config.initialStatus ?? 'deployed',
 
       // 组织关系
       organization: {

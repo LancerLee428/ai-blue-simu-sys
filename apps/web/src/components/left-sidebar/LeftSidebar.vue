@@ -3,6 +3,7 @@
 import { ref, computed } from "vue";
 import { useActionPlanStore } from "../../stores/action-plan";
 import { useTacticalScenarioStore } from "../../stores/tactical-scenario";
+import { useEntityState } from "../../composables/useEntityState";
 import RouteManagementPanel from "./RouteManagementPanel.vue";
 import ActionPlanCard from "../action-plan/ActionPlanCard.vue";
 import ActionPlanTreeItem from "../action-plan/ActionPlanTreeItem.vue";
@@ -10,7 +11,9 @@ import type { ExecutionEngine } from "../../services/execution-engine";
 import type { RouteDecision } from "../../services/ai-decision-visualizer";
 import type {
   EnvironmentConfig,
+  EntitySpec,
   ForceSide,
+  PlatformType,
 } from "../../types/tactical-scenario";
 import headerImage from "../../assets/left-panel/header.png";
 import panelImage from "../../assets/left-panel/left-wrapper.png";
@@ -18,6 +21,7 @@ import titleIconImage from "../../assets/left-panel/title-icon.png";
 
 const actionPlanStore = useActionPlanStore();
 const scenarioStore = useTacticalScenarioStore();
+const { entities: manualDeploymentEntities } = useEntityState();
 
 // 折叠状态
 const sections = ref({
@@ -50,6 +54,30 @@ function toggleForce(forceId: string) {
   }
 }
 
+function manualEntityToSpec(entity: (typeof manualDeploymentEntities.value)[number]): EntitySpec {
+  return {
+    id: entity.id,
+    name: entity.name,
+    type: (entity.platformType ?? "facility-command") as PlatformType,
+    side: entity.forceSide ?? "red",
+    position: {
+      longitude: entity.currentPosition.longitude,
+      latitude: entity.currentPosition.latitude,
+      altitude: entity.currentPosition.altitude,
+    },
+    modelId: entity.modelId,
+  };
+}
+
+const manualEntitiesBySide = computed(() => {
+  const groups: Record<ForceSide, EntitySpec[]> = { red: [], blue: [] };
+  manualDeploymentEntities.value.forEach((entity) => {
+    const side = entity.forceSide ?? "red";
+    groups[side].push(manualEntityToSpec(entity));
+  });
+  return groups;
+});
+
 // 编成编组（固定红方/蓝方）
 const forcesBySide = computed(() => {
   const scenario = scenarioStore.currentScenario;
@@ -63,20 +91,34 @@ const forcesBySide = computed(() => {
     side,
     name,
     members:
-      scenario?.forces
+      [
+        ...(scenario?.forces
         .filter((force) => force.side === side)
         .flatMap((force) =>
           force.entities.map((entity) => ({ ...entity, side })),
-        ) ?? [],
+        ) ?? []),
+        ...manualEntitiesBySide.value[side],
+      ],
   }));
 });
 
 const activeForces = computed(() => {
   const scenario = scenarioStore.currentScenario;
-  return (
+  const scenarioForces =
     scenario?.forces.filter((force) => force.side === activeForceSide.value) ??
-    []
-  );
+    [];
+  const manualEntities = manualEntitiesBySide.value[activeForceSide.value];
+  if (manualEntities.length === 0) return scenarioForces;
+
+  return [
+    ...scenarioForces,
+    {
+      id: `manual-${activeForceSide.value}`,
+      side: activeForceSide.value,
+      name: "手工部署兵力",
+      entities: manualEntities,
+    },
+  ];
 });
 
 const activePlan = computed(() => actionPlanStore.activePlan);
@@ -98,8 +140,11 @@ function handleSelectRoute(routeId: string) {
 // 所有实体列表
 const allEntities = computed(() => {
   const scenario = scenarioStore.currentScenario;
-  if (!scenario) return [];
-  return scenario.forces.flatMap((f) => f.entities);
+  return [
+    ...(scenario?.forces.flatMap((f) => f.entities) ?? []),
+    ...manualEntitiesBySide.value.red,
+    ...manualEntitiesBySide.value.blue,
+  ];
 });
 
 // 所有路线列表

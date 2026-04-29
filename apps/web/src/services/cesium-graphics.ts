@@ -1,5 +1,5 @@
 import * as Cesium from 'cesium';
-import type { PlatformType, EntityStatus } from '../types/tactical-scenario';
+import type { ForceSide, PlatformType, EntityStatus } from '../types/tactical-scenario';
 
 /**
  * 态势状态视觉编码
@@ -115,6 +115,9 @@ export interface ScenarioEntity {
   sourceEntityId: string;
   name: string;
   category: 'force-unit' | 'platform';
+  forceSide?: ForceSide;
+  platformType?: PlatformType;
+  modelId?: string;
   currentPosition: {
     longitude: number;
     latitude: number;
@@ -145,7 +148,13 @@ export function getEntityGraphics(
   let color: Cesium.Color;
   let pixelSize: number;
 
-  if (sourceEntity) {
+  const forceSide = entity.forceSide ?? sourceEntity?.forceSide;
+
+  if (forceSide) {
+    color = forceSide === 'blue'
+      ? (entity.category === 'force-unit' ? Cesium.Color.BLUE : Cesium.Color.CYAN)
+      : (entity.category === 'force-unit' ? Cesium.Color.RED : Cesium.Color.ORANGE);
+  } else if (sourceEntity) {
     const isBlue = 'forceSide' in sourceEntity && sourceEntity.forceSide === 'blue';
     const isRed = 'forceSide' in sourceEntity && sourceEntity.forceSide === 'red';
 

@@ -200,8 +200,8 @@ function getStatusLabel(status: string): string {
 
 <style scoped>
 .plan-card {
-  background: rgba(4, 11, 20, 0.96);
-  border: 1px solid rgba(107, 196, 255, 0.2);
+  background: #0A131F;
+  border: 1px solid rgba(0, 214, 201, 0.15);
   border-radius: 8px;
   margin-bottom: 12px;
   overflow: hidden;
@@ -212,50 +212,50 @@ function getStatusLabel(status: string): string {
 }
 .card-header {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 12px; cursor: pointer;
-  background: rgba(107, 196, 255, 0.05);
+  padding: 12px 14px; cursor: pointer;
+  background: transparent;
   transition: background 0.15s;
 }
-.card-header:hover { background: rgba(107, 196, 255, 0.1); }
-.card-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #e2ebfb; flex: 1; min-width: 0; }
-.expand-icon { color: #6bc4ff; font-size: 10px; flex-shrink: 0; }
+.card-header:hover { background: rgba(255, 255, 255, 0.02); }
+.card-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: #ffffff; flex: 1; min-width: 0; }
+.expand-icon { color: #6bc4ff; font-size: 12px; flex-shrink: 0; }
 .plan-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.plan-date { font-size: 10px; color: #4a5a6a; }
-.status-badge { font-size: 10px; padding: 2px 6px; border-radius: 8px; }
+.card-meta { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.plan-date { font-size: 13px; color: #5a6a7a; font-weight: 500; }
+.status-badge { font-size: 12px; padding: 3px 8px; border-radius: 12px; }
 .status-idle { background: rgba(255,255,255,0.08); color: #8ea4c9; }
 .status-running { background: rgba(0,214,201,0.15); color: #00d6c9; }
 .status-paused { background: rgba(255,193,7,0.15); color: #ffc107; }
 .status-completed { background: rgba(76,175,80,0.15); color: #4caf50; }
 .delete-btn {
-  width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
-  font-size: 16px; color: #ff6b6b; background: none; border: none; cursor: pointer; border-radius: 4px;
+  width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: bold; color: #ff4d4d; background: none; border: none; cursor: pointer; border-radius: 4px;
 }
 .delete-btn:hover { background: rgba(255,68,68,0.15); }
 .card-body { display: flex; flex-direction: column; gap: 0; }
 
 /* Tab Bar */
-.tab-bar { display: flex; border-bottom: 1px solid rgba(107,196,255,0.1); }
+.tab-bar { display: flex; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .tab-btn {
-  flex: 1; padding: 8px; font-size: 11px; font-weight: 600;
+  flex: 1; padding: 10px 0; font-size: 14px; font-weight: 600;
   background: none; border: none; color: #5a6a7a; cursor: pointer;
   border-bottom: 2px solid transparent; transition: all 0.15s;
 }
 .tab-btn:hover { color: #8ea4c9; }
 .tab-btn.active { color: #00d6c9; border-bottom-color: #00d6c9; }
-.tab-content { padding: 10px 12px; max-height: 280px; overflow-y: auto; }
+.tab-content { padding: 16px 14px; }
 
 /* Overview */
-.info-section { margin-bottom: 10px; }
-.info-label { font-size: 10px; color: #6bc4ff; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
-.info-value { font-size: 12px; color: #b0c4d8; line-height: 1.5; }
-.info-row { display: flex; gap: 8px; }
-.side-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
-.side-red { background: rgba(255,68,68,0.12); color: #ff6b6b; }
-.side-blue { background: rgba(68,136,255,0.12); color: #6bc4ff; }
-.strike-item { display: flex; gap: 8px; font-size: 11px; padding: 3px 0; color: #9ab; }
-.strike-time { color: #ffc107; font-family: monospace; flex-shrink: 0; }
-.strike-detail { color: #b0c4d8; }
+.info-section { margin-bottom: 16px; }
+.info-label { font-size: 13px; color: #6bc4ff; font-weight: 600; margin-bottom: 8px; }
+.info-value { font-size: 14px; color: #ffffff; line-height: 1.5; font-weight: 500; }
+.info-row { display: flex; gap: 12px; }
+.side-tag { font-size: 13px; padding: 6px 12px; border-radius: 4px; font-weight: 500; }
+.side-red { background: rgba(200,40,40,0.2); color: #ff6b6b; }
+.side-blue { background: rgba(40,100,200,0.2); color: #6bc4ff; }
+.strike-item { display: flex; gap: 8px; font-size: 13px; padding: 4px 0; color: #ffffff; font-weight: 500; }
+.strike-time { color: #ffc107; font-weight: 700; font-family: monospace; flex-shrink: 0; }
+.strike-detail { color: #ffffff; }
 
 /* Entities */
 .force-section { margin-bottom: 10px; }

@@ -1,24 +1,24 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import * as Cesium from 'cesium';
-import { usePlatformStore } from '../stores/platform';
-import { useEntityState } from '../composables/useEntityState';
-import { useCommandSystem } from '../services/command-system';
-import { CreateEntityCommand } from '../services/command-system';
-import type { EntityConfig } from '../types/deployment';
-import TopToolbar from '../components/toolbar/TopToolbar.vue';
-import MapModule from '../components/map/MapModule.vue';
-import LeftPanelModule from '../components/left-panel/LeftPanelModule.vue';
-import RightPanelModule from '../components/right-panel/RightPanelModule.vue';
-import DeploymentConfigModal from '../components/deployment/DeploymentConfigModal.vue';
-import LeftSidebar from '../components/left-sidebar/LeftSidebar.vue';
-import DecisionPanel from '../components/simulation/DecisionPanel.vue';
-import SimulationDrawer from '../components/simulation/SimulationDrawer.vue';
-import { MapRenderer } from '../services/map-renderer';
-import { ExecutionEngine } from '../services/execution-engine';
-import { useTacticalScenarioStore } from '../stores/tactical-scenario';
-import { useActionPlanStore } from '../stores/action-plan';
-import type { RouteDecision } from '../services/ai-decision-visualizer';
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import * as Cesium from "cesium";
+import { usePlatformStore } from "../stores/platform";
+import { useEntityState } from "../composables/useEntityState";
+import { useCommandSystem } from "../services/command-system";
+import { CreateEntityCommand } from "../services/command-system";
+import type { EntityConfig } from "../types/deployment";
+import TopToolbar from "../components/toolbar/TopToolbar.vue";
+import MapModule from "../components/map/MapModule.vue";
+import LeftPanelModule from "../components/left-panel/LeftPanelModule.vue";
+import RightPanelModule from "../components/right-panel/RightPanelModule.vue";
+import DeploymentConfigModal from "../components/deployment/DeploymentConfigModal.vue";
+import LeftSidebar from "../components/left-sidebar/LeftSidebar.vue";
+import DecisionPanel from "../components/simulation/DecisionPanel.vue";
+import SimulationDrawer from "../components/simulation/SimulationDrawer.vue";
+import { MapRenderer } from "../services/map-renderer";
+import { ExecutionEngine } from "../services/execution-engine";
+import { useTacticalScenarioStore } from "../stores/tactical-scenario";
+import { useActionPlanStore } from "../stores/action-plan";
+import type { RouteDecision } from "../services/ai-decision-visualizer";
 
 const store = usePlatformStore();
 const tacticalStore = useTacticalScenarioStore();
@@ -111,6 +111,10 @@ function handleSimulationSetSpeed(speed: number) {
   syncExecutionStateFromEngine();
 }
 
+function handleOpenEnvironment() {
+  leftSidebarRef.value?.openEnvironmentDialog();
+}
+
 // 部署配置弹窗状态
 const showDeploymentModal = ref(false);
 const deploymentConfig = ref<{
@@ -175,7 +179,10 @@ function handleViewerReady(viewer: Cesium.Viewer) {
   engine.setOnProgressUpdate(({ currentTime, progress, currentPhaseIndex }) => {
     const activePlanId = actionPlanStore.activePlanId;
     if (activePlanId) {
-      actionPlanStore.updateExecutionState(activePlanId, { currentTime, currentPhaseIndex });
+      actionPlanStore.updateExecutionState(activePlanId, {
+        currentTime,
+        currentPhaseIndex,
+      });
     }
   });
 }
@@ -200,7 +207,7 @@ async function handleDeploymentConfirm(config: EntityConfig) {
     // 创建命令并执行
     const command = new CreateEntityCommand(
       { createEntity, updateEntity, deleteEntity },
-      config
+      config,
     );
     await execute(command);
 
@@ -208,9 +215,9 @@ async function handleDeploymentConfirm(config: EntityConfig) {
     showDeploymentModal.value = false;
     deploymentConfig.value = null;
 
-    console.log('实体部署成功');
+    console.log("实体部署成功");
   } catch (error) {
-    console.error('部署失败:', error);
+    console.error("部署失败:", error);
   }
 }
 
@@ -235,20 +242,17 @@ function handleUpdateEntityPosition(payload: {
     currentPosition: {
       longitude: payload.position.longitude,
       latitude: payload.position.latitude,
-      altitude: 0
-    }
+      altitude: 0,
+    },
   });
 }
 
 /**
  * 处理实体状态更新
  */
-function handleUpdateEntityStatus(payload: {
-  id: string;
-  status: string;
-}) {
+function handleUpdateEntityStatus(payload: { id: string; status: string }) {
   updateEntity(payload.id, {
-    currentStatus: payload.status as any
+    currentStatus: payload.status as any,
   });
 }
 
@@ -256,13 +260,13 @@ function handleUpdateEntityStatus(payload: {
  * 转换为 ScenarioEntity 格式（兼容旧的接口）
  */
 const scenarioEntities = computed(() => {
-  return entities.value.map(entity => ({
+  return entities.value.map((entity) => ({
     id: entity.id,
     sourceEntityId: entity.sourceEntityId,
     name: entity.name,
     category: entity.category,
     currentPosition: entity.currentPosition,
-    currentStatus: entity.currentStatus
+    currentStatus: entity.currentStatus,
   }));
 });
 </script>
@@ -286,9 +290,11 @@ const scenarioEntities = computed(() => {
       :can-undo="canUndo"
       :can-redo="canRedo"
       :simulation-open="showSimulationDrawer"
+      :environment-available="!!tacticalStore.currentScenario?.environment"
       @undo="handleUndo"
       @redo="handleRedo"
       @toggle-simulation="showSimulationDrawer = !showSimulationDrawer"
+      @open-environment="handleOpenEnvironment"
     />
 
     <!-- Left panel: action plan management -->
@@ -298,10 +304,10 @@ const scenarioEntities = computed(() => {
     <RightPanelModule />
 
     <!-- AI Decision Panel -->
-    <DecisionPanel
+    <!-- <DecisionPanel
       :selected-route-id="selectedRouteId"
       :decisions="routeDecisions"
-    />
+    /> -->
 
     <SimulationDrawer
       :open="showSimulationDrawer"

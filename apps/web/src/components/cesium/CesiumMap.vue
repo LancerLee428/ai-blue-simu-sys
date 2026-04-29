@@ -33,23 +33,37 @@ const { viewer, isReady, initViewer, destroyViewer } = useCesium();
 
 // 拖拽状态
 const draggingEntity = ref<{ id: string; startPosition: Cesium.Cartesian3 } | null>(null);
+const manualEntityIds = new Set<string>();
 
 /**
- * 更新或创建实体
+ * 增量更新手工部署实体，不影响 XML/AI 想定图层。
  */
-function upsertEntities() {
+function upsertManualEntities() {
   if (!viewer.value) return;
-  viewer.value.entities.removeAll();
 
-  // 只渲染 AI 生成的方案实体，不使用测试数据
-  const entitiesToRender = props.entities;
+  const nextIds = new Set(props.entities.map(entity => entity.id));
+  manualEntityIds.forEach((id) => {
+    if (!nextIds.has(id)) {
+      viewer.value!.entities.removeById(id);
+      manualEntityIds.delete(id);
+    }
+  });
 
-  entitiesToRender.forEach((entity) => {
+  props.entities.forEach((entity) => {
     const graphics = getEntityGraphics(entity);
-    viewer.value!.entities.add({
+    const existing = viewer.value!.entities.getById(entity.id);
+    if (existing && !manualEntityIds.has(entity.id)) {
+      return;
+    }
+    if (existing) {
+      viewer.value!.entities.removeById(entity.id);
+    }
+    const cesiumEntity = viewer.value!.entities.add({
       id: entity.id,
       ...graphics,
     });
+    (cesiumEntity as any).__manualDeploymentLayer = true;
+    manualEntityIds.add(entity.id);
   });
 
   // 高亮选中的实体
@@ -181,7 +195,7 @@ onMounted(async () => {
   initSelectionHandler((id) => emit('select', id));
   dragHandler = initDragHandler();
   clickHandler = initClickHandler();
-  upsertEntities();
+  upsertManualEntities();
 });
 
 onBeforeUnmount(() => {
@@ -198,7 +212,7 @@ onBeforeUnmount(() => {
 });
 
 // 监听实体变化
-watch(() => props.entities, upsertEntities, { deep: true });
+watch(() => props.entities, upsertManualEntities, { deep: true });
 
 // 监听选中状态变化
 watch(() => props.selectedEntityId, (newId, oldId) => {
@@ -224,6 +238,23 @@ defineExpose({
     if (viewer.value) {
       highlightEntity(viewer.value, id, highlight);
     }
+  },
+  /**
+   * 将屏幕像素坐标（相对于 canvas 左上角）精确转换为地球经纬度。
+   * 使用 Cesium pickEllipsoid，可正确处理任意相机姿态。
+   */
+  screenToLatLng: (screenX: number, screenY: number): { longitude: number; latitude: number } | null => {
+    if (!viewer.value) return null;
+    const cartesian = viewer.value.scene.camera.pickEllipsoid(
+      new Cesium.Cartesian2(screenX, screenY),
+      viewer.value.scene.globe.ellipsoid,
+    );
+    if (!cartesian) return null;
+    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+    return {
+      longitude: Cesium.Math.toDegrees(cartographic.longitude),
+      latitude: Cesium.Math.toDegrees(cartographic.latitude),
+    };
   },
 });
 </script>

@@ -1,6 +1,7 @@
 /**
  * 部署配置系统的完整类型定义
  */
+import type { EntityStatus, ForceSide, PlatformType } from './tactical-scenario';
 
 /**
  * 装备挂载配置
@@ -48,6 +49,10 @@ export interface ScenarioEntity {
   sourceEntityId: string;
   name: string;
   category: 'force-unit' | 'platform';
+  forceSide?: ForceSide;
+  platformType?: PlatformType;
+  modelId?: string;
+  speed?: number;
 
   // 位置信息（稳定存储）
   currentPosition: {
@@ -57,7 +62,7 @@ export interface ScenarioEntity {
   };
 
   // 状态信息
-  currentStatus: 'planned' | 'deployed' | 'engaged' | 'destroyed';
+  currentStatus: EntityStatus;
 
   // 组织关系
   organization: {
@@ -100,6 +105,11 @@ export interface ScenarioEntity {
 export interface EntityConfig {
   sourceEntityId: string;
   name: string;
+  forceSide?: ForceSide;
+  platformType?: PlatformType;
+  modelId?: string;
+  speed?: number;
+  initialStatus?: EntityStatus;
   position: {
     longitude: number;
     latitude: number;

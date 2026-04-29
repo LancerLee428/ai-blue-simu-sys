@@ -11,11 +11,14 @@ import type {
 import { AiTacticalService } from '../services/ai-tactical';
 import { TacticalValidator } from '../services/tactical-validator';
 import { WordExporter } from '../services/word-exporter';
+import { XmlScenarioParser } from '../services/xml-scenario-parser';
 import type { MapRenderer } from '../services/map-renderer';
 import type { ExecutionEngine } from '../services/execution-engine';
 import { useActionPlanStore } from './action-plan';
+import demoScenarioXml from '../../../../data-example/东海联合打击-2024-1777165955760.xml?raw';
 
 const LLM_API_KEY = import.meta.env.VITE_LLM_API_KEY || '';
+const DEMO_STREAM_DELAY_MS = 18;
 
 export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   // 状态
@@ -30,6 +33,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   // AI 服务（延迟初始化）
   let aiService: AiTacticalService | null = null;
   let wordExporter: WordExporter | null = null;
+  let xmlParser: XmlScenarioParser | null = null;
 
   // 战术验证器
   const validator = new TacticalValidator();
@@ -70,6 +74,13 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
       wordExporter = new WordExporter();
     }
     return wordExporter;
+  }
+
+  function ensureXmlParser() {
+    if (!xmlParser) {
+      xmlParser = new XmlScenarioParser();
+    }
+    return xmlParser;
   }
 
   // --- 对话操作 ---
@@ -204,6 +215,51 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     }
   }
 
+  async function generateScenarioDemo(userIntent: string) {
+    isGenerating.value = true;
+    error.value = null;
+    thinkingChain.value = '';
+
+    addUserMessage(userIntent);
+
+    const thinkingMsgId = `msg-${Date.now()}-demo-thinking`;
+    chatHistory.value.push({
+      id: thinkingMsgId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    });
+
+    try {
+      const streamText = buildDemoAnalysis(userIntent);
+      await streamAssistantText(thinkingMsgId, streamText);
+
+      const scenario = ensureXmlParser().parse(demoScenarioXml);
+      const validationResult = validator.validate(scenario);
+      if (!validationResult.valid) {
+        console.warn(
+          `[离线演示] 方案存在约束提示:\n${validationResult.errors.map(e => e.message).join('\n')}`,
+        );
+      }
+
+      applyGeneratedScenario(scenario);
+      addAssistantMessage('战术方案已生成，已完成兵力编组、行动路线与关键打击任务部署。', scenario);
+
+      return scenario;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '生成失败';
+      error.value = msg;
+      const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
+      if (msgIndex !== -1) {
+        chatHistory.value[msgIndex].content = `生成失败: ${msg}`;
+      }
+      addAssistantMessage(`生成失败: ${msg}`);
+      throw err;
+    } finally {
+      isGenerating.value = false;
+    }
+  }
+
   // --- 地图操作 ---
 
   function deployToMap() {
@@ -283,13 +339,50 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     });
   }
 
+  function buildDemoAnalysis(userIntent: string): string {
+    const intent = userIntent.trim() || '东海方向联合打击任务';
+    return [
+      `收到任务需求：“${intent}”。正在抽取作战区域、交战双方、任务目标与约束条件。\n\n`,
+      '已识别当前任务属于东海方向多域联合打击样式，重点围绕红方海空兵力协同突防、蓝方岛链防御体系压制、预警探测节点削弱展开。\n\n',
+      '正在评估战场环境：海域范围覆盖东海至冲绳周边，气象条件整体稳定，能见度和海况满足舰机协同机动、远程探测与精确打击窗口要求。\n\n',
+      '正在编组兵力：红方以航母编队、驱逐舰、潜艇、歼-16、歼-16D、无人机和地面防空火力构成联合突击体系；蓝方以出云号、摩耶级驱逐舰、F-15J、E-2C、爱国者与 AN/TPY-2 构成防御体系。\n\n',
+      '正在推演关键链路：红方电子战平台优先压缩蓝方预警探测半径，歼-16 编队沿预设航路接近 E-2C 预警机，蓝方 F-15J 尝试反舰拦截山东舰编队。\n\n',
+      '正在生成行动路线与打击任务：红方主攻路线由东海方向向蓝方预警节点推进，蓝方拦截路线指向红方航母编队，双方在 T+60s 形成首轮交战事件。\n\n',
+      '方案校核完成：兵力部署、探测范围、行动路线、打击任务、阶段事件与环境配置已形成一致的推演输入。正在完成地图部署与行动计划生成。',
+    ].join('');
+  }
+
+  async function streamAssistantText(messageId: string, text: string) {
+    for (let index = 0; index < text.length; index += 2) {
+      const chunk = text.slice(index, index + 2);
+      thinkingChain.value += chunk;
+      const msgIndex = chatHistory.value.findIndex(m => m.id === messageId);
+      if (msgIndex !== -1) {
+        chatHistory.value[msgIndex].content = thinkingChain.value;
+      }
+      await waitWithRaf(DEMO_STREAM_DELAY_MS);
+    }
+  }
+
+  function waitWithRaf(durationMs: number) {
+    return new Promise<void>((resolve) => {
+      const start = performance.now();
+      const tick = (now: number) => {
+        if (now - start >= durationMs) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+
   function clearHistory() {
     chatHistory.value = [];
   }
 
-  // --- XML 导入 ---
-
-  function loadScenario(scenario: TacticalScenario) {
+  function applyGeneratedScenario(scenario: TacticalScenario) {
     currentScenario.value = scenario;
 
     if (executionEngine && mapRenderer) {
@@ -304,6 +397,12 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     } catch (err) {
       console.error('Failed to create action plan:', err);
     }
+  }
+
+  // --- XML 导入 ---
+
+  function loadScenario(scenario: TacticalScenario) {
+    applyGeneratedScenario(scenario);
 
     addAssistantMessage(
       `XML 想定已导入：${scenario.scenarioMetadata?.name ?? scenario.id}`,
@@ -350,6 +449,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     // 方法
     initEngine,
     generateScenario,
+    generateScenarioDemo,
     refineScenario,
     deployToMap,
     clearMap,

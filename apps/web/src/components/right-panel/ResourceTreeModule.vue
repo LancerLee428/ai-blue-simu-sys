@@ -94,6 +94,12 @@ function handleDragStart(child: TreeNode, e: DragEvent) {
   emit('dragResource', child);
 }
 
+function handleDragEnd(e: DragEvent) {
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'copy';
+  }
+}
+
 const expandedNodes = ref<Set<string>>(new Set(['cat-recon', 'cat-strike', 'cat-support']));
 
 function toggleNode(id: string) {
@@ -121,6 +127,7 @@ function toggleNode(id: string) {
           v-for="child in cat.children"
           :key="child.id"
           @dragstart="(e: DragEvent) => handleDragStart(child, e)"
+          @dragend="handleDragEnd"
         >
           <ResourceTreeNode :node="child" :depth="1" />
         </div>

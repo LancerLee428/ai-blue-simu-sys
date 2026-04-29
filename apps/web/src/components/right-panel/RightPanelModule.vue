@@ -103,7 +103,6 @@ const primaryTabLabel = computed(() => {
 }
 
 .panel-body--ai {
-  padding: 22px 18px 16px;
   overflow: hidden;
 }
 

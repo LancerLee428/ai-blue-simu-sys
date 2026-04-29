@@ -44,9 +44,8 @@ export class MapRenderer {
    * 渲染完整战术方案
    */
   renderScenario(scenario: TacticalScenario): void {
-    // 清除旧实体，避免 "already exists" 错误
-    this.viewer.entities.removeAll();
-    this.entityIdSet.clear();
+    // 只清除战术想定图层，避免覆盖手工拖拽部署实体。
+    this.clearTacticalLayers();
     this.routeDecisions.clear();
 
     this.renderEntities(scenario);

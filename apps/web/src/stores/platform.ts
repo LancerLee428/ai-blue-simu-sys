@@ -3,10 +3,13 @@ import { ref } from 'vue';
 import type { PlatformSkeleton } from '../app/types/platform';
 import {
   FALLBACK_PLATFORM,
+  confirmStagedScenarioDraftRequest,
   loadPlatformState,
+  loadStagedScenarioDraft,
   requestDeploymentDraft,
   rejectDeploymentDraftRequest,
   confirmDeploymentDraftRequest,
+  rejectStagedScenarioDraftRequest,
   undoDeploymentConfirmationRequest,
 } from '../app/state/platform-state';
 
@@ -93,6 +96,42 @@ export const usePlatformStore = defineStore('platform', () => {
     }
   }
 
+  async function refreshStagedScenarioDraft() {
+    loading.value = true;
+    error.value = null;
+    try {
+      platform.value = await loadStagedScenarioDraft();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load staged scenario draft';
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function confirmStagedDraft() {
+    loading.value = true;
+    error.value = null;
+    try {
+      platform.value = await confirmStagedScenarioDraftRequest();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to confirm staged draft';
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function rejectStagedDraft(reason: string) {
+    loading.value = true;
+    error.value = null;
+    try {
+      platform.value = await rejectStagedScenarioDraftRequest(reason);
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to reject staged draft';
+    } finally {
+      loading.value = false;
+    }
+  }
+
   return {
     platform,
     selectedPointId,
@@ -104,5 +143,8 @@ export const usePlatformStore = defineStore('platform', () => {
     confirmDraft,
     rejectDraft,
     undoConfirm,
+    refreshStagedScenarioDraft,
+    confirmStagedDraft,
+    rejectStagedDraft,
   };
 });

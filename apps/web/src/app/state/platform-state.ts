@@ -63,6 +63,7 @@ export const FALLBACK_PLATFORM: PlatformSkeleton = {
       state: 'planned',
     },
   ],
+  stagedScenarioDraft: null,
   ai: {
     sampleCommand: '在台湾部署对抗兵力',
     draft: {
@@ -317,6 +318,88 @@ export async function undoDeploymentConfirmationRequest() {
       situationWorkbench: result.situationWorkbench,
     };
 
+    apiAvailable = true;
+    return platformState;
+  } catch {
+    apiAvailable = false;
+    return platformState;
+  }
+}
+
+export async function loadStagedScenarioDraft() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/scenario/staged-draft`);
+    if (!response.ok) {
+      throw new Error('暂存草案拉取失败');
+    }
+
+    const result = (await response.json()) as {
+      draft: PlatformSkeleton['stagedScenarioDraft'];
+    };
+
+    platformState = {
+      ...platformState,
+      stagedScenarioDraft: result.draft,
+    };
+    apiAvailable = true;
+    return platformState;
+  } catch {
+    apiAvailable = false;
+    return platformState;
+  }
+}
+
+export async function confirmStagedScenarioDraftRequest() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/scenario/staged-draft-confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      throw new Error('暂存草案确认失败');
+    }
+
+    const result = (await response.json()) as {
+      draft: PlatformSkeleton['stagedScenarioDraft'];
+      scenarioWorkspace: PlatformSkeleton['scenarioWorkspace'];
+    };
+
+    platformState = {
+      ...platformState,
+      stagedScenarioDraft: result.draft,
+      scenarioWorkspace: result.scenarioWorkspace,
+    };
+    apiAvailable = true;
+    return platformState;
+  } catch {
+    apiAvailable = false;
+    return platformState;
+  }
+}
+
+export async function rejectStagedScenarioDraftRequest(reason: string) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/scenario/staged-draft-reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+
+    if (!response.ok) {
+      throw new Error('暂存草案拒绝失败');
+    }
+
+    const result = (await response.json()) as {
+      draft: PlatformSkeleton['stagedScenarioDraft'];
+      scenarioWorkspace: PlatformSkeleton['scenarioWorkspace'];
+    };
+
+    platformState = {
+      ...platformState,
+      stagedScenarioDraft: result.draft,
+      scenarioWorkspace: result.scenarioWorkspace,
+    };
     apiAvailable = true;
     return platformState;
   } catch {

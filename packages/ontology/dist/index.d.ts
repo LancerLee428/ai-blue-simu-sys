@@ -1,3 +1,20 @@
+export type DemoResourceGraphNode = {
+    id: string;
+    type: 'force-unit' | 'platform' | 'weapon' | 'sensor' | 'geo-zone' | 'mission';
+    name: string;
+    side?: 'red' | 'blue' | 'neutral';
+    capabilities: string[];
+    status: 'available' | 'unavailable' | 'reserved';
+    metadata: Record<string, string | number | boolean | string[]>;
+};
+export type DemoResourceGraphRelationship = {
+    id: string;
+    type: 'belongs_to' | 'can_command' | 'can_communicate' | 'can_detect' | 'can_strike' | 'can_support' | 'deployable_to' | 'suitable_for';
+    from: string;
+    to: string;
+    label: string;
+    metadata: Record<string, string | number | boolean>;
+};
 export declare const ONTOLOGY_ROOTS: readonly ["ForceUnit", "Platform", "GeoZone", "Mission"];
 export declare const demoForceUnits: {
     id: string;
@@ -43,3 +60,5 @@ export declare const demoGeoZones: {
     controlAuthority: string;
     dataSource: string;
 }[];
+export declare const demoResourceGraphNodes: DemoResourceGraphNode[];
+export declare const demoResourceGraphRelationships: DemoResourceGraphRelationship[];

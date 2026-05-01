@@ -2,14 +2,21 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ModuleDescriptor } from '@ai-blue-simu-sys/shared';
 import type {
+  CandidateResourceGraphRequest,
   DeploymentConfirmCommand,
   DeploymentDraftResponse,
   DeploymentIntentCommand,
   DeploymentRejectCommand,
+  ResourceOrchestrationDraft,
 } from '@ai-blue-simu-sys/ai-core';
 import type { ScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
 import type { WorkbenchDeploymentPoint } from '@ai-blue-simu-sys/situation';
 import { ontologyModule } from './modules/ontology';
+import {
+  queryCandidateResourceGraph,
+  resourceGraphModule,
+  validateResourceOrchestration,
+} from './modules/resource-graph';
 import {
   confirmScenarioDeployment,
   getScenarioWorkspaceState,
@@ -58,6 +65,7 @@ export function createPlatformSkeleton(): PlatformSkeleton {
     version: appVersion,
     modules: [
       ontologyModule,
+      resourceGraphModule,
       scenarioWorkspaceModule,
       situationWorkbenchModule,
       aiAssistantModule,
@@ -119,6 +127,18 @@ async function handleNodeRequest(request: IncomingMessage, response: ServerRespo
 
   if (method === 'GET' && url.pathname === '/api/platform-skeleton') {
     writeJson(response, 200, createPlatformSkeleton());
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/resource-graph/query-candidates') {
+    const command = await readJsonBody<CandidateResourceGraphRequest>(request);
+    writeJson(response, 200, queryCandidateResourceGraph(command));
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/resource-graph/validate-orchestration') {
+    const command = await readJsonBody<ResourceOrchestrationDraft>(request);
+    writeJson(response, 200, validateResourceOrchestration(command));
     return;
   }
 

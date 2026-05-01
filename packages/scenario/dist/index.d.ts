@@ -35,3 +35,19 @@ export type ScenarioWorkspaceState = {
     lastRejectedDraftReason?: string;
 };
 export declare const demoScenarioWorkspaceState: ScenarioWorkspaceState;
+export type ScenarioDraftStatus = 'generated' | 'validation_failed' | 'staged' | 'confirmed' | 'rejected';
+export type ScenarioDraftRecord = {
+    id: string;
+    orchestrationDraftId: string;
+    status: ScenarioDraftStatus;
+    summary: string;
+    tacticalScenario: unknown;
+    evidenceIds: string[];
+    validationIssueCount: number;
+    createdAt: string;
+    updatedAt: string;
+};
+export type ScenarioStagingResult = {
+    draft: ScenarioDraftRecord;
+    scenarioWorkspace: ScenarioWorkspaceState;
+};

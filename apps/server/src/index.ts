@@ -8,19 +8,25 @@ import type {
   DeploymentIntentCommand,
   DeploymentRejectCommand,
   ResourceOrchestrationDraft,
+  TacticalScenarioDraft,
 } from '@ai-blue-simu-sys/ai-core';
 import type { ScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
 import type { WorkbenchDeploymentPoint } from '@ai-blue-simu-sys/situation';
 import { ontologyModule } from './modules/ontology';
+import { generateScenarioFromOrchestration } from './modules/ai-workflow';
 import {
   queryCandidateResourceGraph,
   resourceGraphModule,
   validateResourceOrchestration,
 } from './modules/resource-graph';
 import {
+  confirmStagedScenarioDraft,
   confirmScenarioDeployment,
+  getStagedScenarioDraft,
   getScenarioWorkspaceState,
+  rejectStagedScenarioDraft,
   scenarioWorkspaceModule,
+  stageScenarioDraft,
   undoScenarioConfirmation,
 } from './modules/scenario-workspace';
 import { getSituationWorkbenchState, situationWorkbenchModule } from './modules/situation-workbench';
@@ -175,6 +181,51 @@ async function handleNodeRequest(request: IncomingMessage, response: ServerRespo
         })),
       ),
     );
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/scenario/generate-from-orchestration') {
+    const command = await readJsonBody<ResourceOrchestrationDraft>(request);
+    writeJson(response, 200, generateScenarioFromOrchestration(command));
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/scenario/validate-and-stage') {
+    const command = await readJsonBody<TacticalScenarioDraft>(request);
+    const blockingErrors = command.validation.issues.filter((issue) => issue.severity === 'error');
+
+    if (blockingErrors.length > 0) {
+      writeJson(response, 422, {
+        message: 'AI Workflow 草案校验未通过，不能暂存。',
+        validation: command.validation,
+      });
+      return;
+    }
+
+    writeJson(response, 200, stageScenarioDraft({
+      id: command.id,
+      orchestrationDraftId: command.orchestrationDraftId,
+      summary: command.summary,
+      tacticalScenario: command.scenario,
+      evidenceIds: command.evidence.map((item) => item.id),
+      validationIssueCount: command.validation.issues.length,
+    }));
+    return;
+  }
+
+  if (method === 'GET' && url.pathname === '/api/scenario/staged-draft') {
+    writeJson(response, 200, { draft: getStagedScenarioDraft() });
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/scenario/staged-draft-confirm') {
+    writeJson(response, 200, confirmStagedScenarioDraft());
+    return;
+  }
+
+  if (method === 'POST' && url.pathname === '/api/scenario/staged-draft-reject') {
+    const command = await readJsonBody<{ reason: string }>(request);
+    writeJson(response, 200, rejectStagedScenarioDraft(command.reason));
     return;
   }
 

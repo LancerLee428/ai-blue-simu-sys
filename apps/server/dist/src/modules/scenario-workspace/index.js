@@ -1,6 +1,7 @@
 import { demoScenarioWorkspaceState } from '@ai-blue-simu-sys/scenario';
 let scenarioWorkspaceState = structuredClone(demoScenarioWorkspaceState);
 let previousScenarioWorkspaceState = null;
+let stagedScenarioDraft = null;
 export const scenarioWorkspaceModule = {
     key: 'scenario-workspace',
     title: 'Scenario Workspace',
@@ -80,4 +81,73 @@ export function undoScenarioConfirmation() {
     };
     previousScenarioWorkspaceState = null;
     return scenarioWorkspaceState;
+}
+export function getStagedScenarioDraft() {
+    return stagedScenarioDraft;
+}
+export function stageScenarioDraft(draft) {
+    const now = new Date().toISOString();
+    stagedScenarioDraft = {
+        ...draft,
+        status: 'staged',
+        createdAt: now,
+        updatedAt: now,
+    };
+    scenarioWorkspaceState = {
+        ...scenarioWorkspaceState,
+        versionHistory: [
+            ...scenarioWorkspaceState.versionHistory,
+            createHistoryEntry('draft_generated', scenarioWorkspaceState.projections.length, `AI Workflow 暂存草案：${draft.summary}`, scenarioWorkspaceState.scenario.versionLabel),
+        ],
+    };
+    return {
+        draft: stagedScenarioDraft,
+        scenarioWorkspace: scenarioWorkspaceState,
+    };
+}
+export function confirmStagedScenarioDraft() {
+    if (!stagedScenarioDraft) {
+        return {
+            draft: null,
+            scenarioWorkspace: scenarioWorkspaceState,
+        };
+    }
+    stagedScenarioDraft = {
+        ...stagedScenarioDraft,
+        status: 'confirmed',
+        updatedAt: new Date().toISOString(),
+    };
+    scenarioWorkspaceState = {
+        ...scenarioWorkspaceState,
+        scenario: {
+            ...scenarioWorkspaceState.scenario,
+            status: 'ready',
+            versionLabel: 'v0.3',
+        },
+        versionHistory: [
+            ...scenarioWorkspaceState.versionHistory,
+            createHistoryEntry('confirmed', scenarioWorkspaceState.projections.length, `确认 AI Workflow 草案：${stagedScenarioDraft.summary}`, 'v0.3'),
+        ],
+    };
+    return {
+        draft: stagedScenarioDraft,
+        scenarioWorkspace: scenarioWorkspaceState,
+    };
+}
+export function rejectStagedScenarioDraft(reason) {
+    if (!stagedScenarioDraft) {
+        return {
+            draft: null,
+            scenarioWorkspace: rejectScenarioDraft(reason),
+        };
+    }
+    stagedScenarioDraft = {
+        ...stagedScenarioDraft,
+        status: 'rejected',
+        updatedAt: new Date().toISOString(),
+    };
+    return {
+        draft: stagedScenarioDraft,
+        scenarioWorkspace: rejectScenarioDraft(reason),
+    };
 }

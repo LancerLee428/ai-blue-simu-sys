@@ -10,6 +10,96 @@
 
 ---
 
+## 0. 实施状态更新（2026-05-03）
+
+### 0.1 当前已完成
+
+以下能力已经在代码里落地，不再属于“下一步最优先补齐”的范围：
+
+- `packages/ai-core/src/index.ts`
+  - 已定义 `TaskIntent`、`ResourceRequirementPlan`、`CandidateResourceGraph`、`ResourceOrchestrationDraft`、`TacticalScenarioDraft` 等 AI Workflow 共享 DTO。
+- `packages/ontology/src/index.ts`
+  - 已提供演示资源图谱数据，并在最新一轮扩充后达到 `28` 个节点、`55` 条关系。
+- `apps/server/src/modules/resource-graph/index.ts`
+  - 已实现候选资源子图查询和资源编排校验。
+- `apps/server/src/modules/ai-workflow/index.ts`
+  - 已实现从资源编排草案生成 `TacticalScenarioDraft`。
+- `apps/server/src/modules/scenario-workspace/index.ts`
+  - 已实现草案暂存、确认、拒绝。
+- `apps/server/src/index.ts`
+  - 已暴露 `/api/resource-graph/query-candidates`、`/api/resource-graph/validate-orchestration`、`/api/scenario/generate-from-orchestration`、`/api/scenario/validate-and-stage`、`/api/scenario/staged-draft*` 等接口。
+- `apps/web/src/components/right-panel/AIAssistantModule.vue`
+  - 已有最小 AI Workflow 草案刷新、确认、拒绝入口。
+- `apps/web/src/components/right-panel/ResourceGraphModule.vue`
+  - 已落地图谱可视化，且已升级为大弹窗展示，支持全量图谱/推荐关系切换、节点详情、关系高亮和类型筛选。
+- `docs/ai-workflow-tool-api.md`
+  - 已补充 AI Workflow 工具接口说明。
+
+### 0.2 当前真实缺口
+
+虽然图谱展示和首期接口闭环已经有了，但从整个系统智能化建设安排看，当前仍然只完成了“资源图谱 + 本地工具接口 + 最小 AI Workflow 草案承接”这一段。还没有进入后续几个更大的阶段。
+
+从全局看，当前真实缺口分为四类：
+
+1. **AI Workflow 仍是本地最小闭环，不是外部编排平台正式接入**
+   - 当前本地 server 已暴露工具接口，但还没有真正交付 Dify / Coze / LangGraph 可直接运行的工作流编排产物。
+   - 还缺少完整的节点输入输出规范、失败重试编排、人工确认前后的状态回写约定。
+
+2. **RAG 仍未建设**
+   - 目前只有“资源图谱优先于 RAG”的架构边界和文档，没有本地知识库入库、切片、召回、引用展示、知识治理。
+   - 条令、战法、案例、Word/XML 语义导入后的文本知识，还没有进入系统的增强检索链路。
+
+3. **资源编排解释链路仍不完整**
+   - 当前前端图谱中的“本次推荐关系”仍然主要依赖以下退化来源：
+     - `stagedScenarioDraft.scenario.forces[].entities[].id`
+     - 当前推演场景里的实体 `id`
+     - 普通部署草案名称映射
+   这意味着：
+   - 图谱已经能展示“全量资源关系”。
+   - 图谱还不能稳定展示“AI 实际选中的资源 + AI 实际使用的关系链 + AI 实际引用的 evidence”。
+   - 人工查看图谱时，仍然无法直接回答“模型为什么这么选、用了哪几条链路、缺少哪些替代项”。
+
+4. **知识图谱治理层仍未开始**
+   - 现在的图谱仍然是结构化演示数据，不是可维护、可治理、可导入、可版本化的正式知识图谱层。
+   - 后续还缺少资源入库、关系维护、图谱审核、图谱版本和图谱可视化运营能力。
+
+### 0.3 结论：从全局安排看还剩哪些阶段
+
+如果回到你最开始对整个系统的智能化安排，当前状态可以总结为：
+
+- **已基本完成：**
+  - AI Workflow 本地工具接口最小闭环
+  - 最小资源图谱模型
+  - 资源图谱可视化页面
+  - `resource graph -> scenario draft -> staged draft -> confirm` 最小承接链
+
+- **还没完成：**
+  1. 外部 AI Workflow 平台正式接入与编排落地
+  2. 本地 RAG 知识库建设
+  3. 推荐解释链路打通
+  4. 知识图谱治理与数据建设正式化
+
+### 0.4 下一步应该先做什么（全局）
+
+如果按整个系统建设顺序来排，而不是只盯知识图谱页面，**下一步最应该先做的是：外部 AI Workflow 平台正式接入与编排落地。**
+
+原因是：
+
+- 你最早定的第一优先就是 workflow。
+- 现在系统已经把本地接口和草案承接层准备出来了，已经具备被 Dify 调用的基础。
+- 如果不先把外部 workflow 跑起来，RAG 没有接入入口，图谱也只能停留在本地展示，不能真正进入智能编排主链路。
+
+更具体地说，下一阶段顺序建议改成：
+
+1. **外部 AI Workflow 接入**
+   - 在 Dify 等平台把意图解析、资源需求规划、候选资源召回、资源编排、方案生成、校验修正、草案输出串起来。
+2. **推荐解释链路打通**
+   - 让 workflow 的 `selectedResources / chains / evidence` 真正回流到前端和草案状态。
+3. **本地 RAG 知识库建设**
+   - 让条令、战法、案例、Word/XML 进入召回链路，作为解释和增强层。
+4. **知识图谱治理正式化**
+   - 把现在的 demo 资源图谱升级成可持续维护的数据层。
+
 ## 1. 范围说明
 
 本计划实现设计文档 [2026-05-01-ai-workflow-resource-orchestration-design.md](/Users/lancer/code/15s/ai-blue-simu-sys/docs/superpowers/specs/2026-05-01-ai-workflow-resource-orchestration-design.md) 中的首期 MVP。
@@ -1714,3 +1804,213 @@ git status --short
   - 本计划没有待填充章节，没有 `TBD`，没有“后续再补”的执行步骤。
 - 类型一致性：
   - 任务 1 定义的 DTO 名称在后续 server 和 web 任务中保持一致。
+
+## 13. 资源编排子阶段任务：打通推荐解释链路
+
+**目标：** 让图谱页面不只是展示资源关系，而是能解释 AI Workflow 为什么推荐这些资源、用了哪些关系链、依据来自哪里。
+
+**定位：** 这是“资源图谱 / 资源编排解释层”的下一子任务，不等于整个系统智能化建设的下一阶段总任务。
+
+**原因：** 当前资源图谱已经扩充到可展示状态，但本次推荐关系仍然不能稳定来自 AI Workflow 原始编排草案。若后续进入资源编排解释增强阶段，应优先打通这条链。
+
+**涉及文件：**
+
+- 修改 `packages/ai-core/src/index.ts`
+  - 补充用于前端展示的推荐解释 DTO。
+- 修改 `packages/scenario/src/index.ts`
+  - 在 `ScenarioDraftRecord` 中增加 `orchestrationDraft` 或 `orchestrationSnapshot` 字段。
+- 修改 `apps/server/src/modules/scenario-workspace/index.ts`
+  - 暂存草案时保存完整资源编排快照。
+- 修改 `apps/server/src/index.ts`
+  - `/api/scenario/validate-and-stage` 入参需要携带或可关联完整 `ResourceOrchestrationDraft`。
+- 修改 `apps/web/src/app/types/platform.ts`
+  - 前端平台状态暴露完整推荐解释数据。
+- 修改 `apps/web/src/app/state/platform-state.ts`
+  - 拉取暂存草案时保留推荐解释数据。
+- 修改 `apps/web/src/stores/platform.ts`
+  - 暴露当前推荐解释快照。
+- 修改 `apps/web/src/components/right-panel/ResourceGraphModule.vue`
+  - 图谱直接使用 `selectedResources`、`chains.relationshipIds`、`evidence`。
+- 修改 `apps/web/src/components/right-panel/AIAssistantModule.vue`
+  - 草案卡片增加“查看推荐依据”入口或提示。
+- 修改 `docs/ai-workflow-tool-api.md`
+  - 明确 Dify 调用 `validate-and-stage` 时必须传入完整编排草案或草案引用。
+
+### 13.1 任务拆解
+
+- [ ] **步骤 1：定义推荐解释快照类型**
+
+在 `packages/ai-core/src/index.ts` 中新增：
+
+```ts
+export type ResourceRecommendationExplanation = {
+  resourceId: string;
+  role: SelectedResourceRole;
+  reason: string;
+  matchedCapabilities: string[];
+  relationshipIds: string[];
+  evidenceIds: string[];
+};
+
+export type ResourceOrchestrationSnapshot = {
+  draft: ResourceOrchestrationDraft;
+  explanations: ResourceRecommendationExplanation[];
+};
+```
+
+预期：前端不再通过名称猜测推荐节点，而是通过 `draft.selectedResources[].resourceId` 精确识别。
+
+- [ ] **步骤 2：让暂存草案保存资源编排快照**
+
+在 `packages/scenario/src/index.ts` 的 `ScenarioDraftRecord` 中增加：
+
+```ts
+orchestrationSnapshot?: ResourceOrchestrationSnapshot;
+```
+
+其中 `ResourceOrchestrationSnapshot` 从 `@ai-blue-simu-sys/ai-core` 引入。
+
+预期：`GET /api/scenario/staged-draft` 返回的草案能带回 AI 原始推荐资源、链路和证据。
+
+- [ ] **步骤 3：调整后端 staging 流程**
+
+在 `apps/server/src/modules/ai-workflow/index.ts` 中，生成 `TacticalScenarioDraft` 时保留 orchestration 信息。推荐做法是扩展 `TacticalScenarioDraft`：
+
+```ts
+orchestrationSnapshot?: ResourceOrchestrationSnapshot;
+```
+
+生成时填入：
+
+```ts
+orchestrationSnapshot: {
+  draft,
+  explanations: draft.selectedResources.map((resource) => ({
+    resourceId: resource.resourceId,
+    role: resource.role,
+    reason: resource.reason,
+    matchedCapabilities: demoResourceGraphNodes.find((node) => node.id === resource.resourceId)?.capabilities ?? [],
+    relationshipIds: draft.chains
+      .filter((chain) => chain.relationshipIds.some((id) => resource.evidenceIds.includes(id)))
+      .flatMap((chain) => chain.relationshipIds),
+    evidenceIds: resource.evidenceIds,
+  })),
+}
+```
+
+预期：后端在生成草案时就把“为什么选”结构化出来。
+
+- [ ] **步骤 4：调整 `validate-and-stage` 保存逻辑**
+
+在 `apps/server/src/index.ts` 调用 `stageScenarioDraft()` 时，把 `command.orchestrationSnapshot` 写入暂存记录：
+
+```ts
+orchestrationSnapshot: command.orchestrationSnapshot,
+```
+
+预期：刷新前端 AI Workflow 草案后，图谱能拿到推荐解释快照。
+
+- [ ] **步骤 5：前端平台状态接收解释快照**
+
+在 `apps/web/src/app/types/platform.ts` 中确保 `stagedScenarioDraft` 类型使用扩展后的 `TacticalScenarioDraft`。
+
+在 `apps/web/src/app/state/platform-state.ts` 中保持 `draft` 原样写回：
+
+```ts
+stagedScenarioDraft: result.draft,
+```
+
+预期：不丢弃后端返回的 `orchestrationSnapshot`。
+
+- [ ] **步骤 6：图谱改为消费精确推荐数据**
+
+在 `apps/web/src/components/right-panel/ResourceGraphModule.vue` 中，将 `recommendedNodeIds` 的优先来源改为：
+
+```ts
+const orchestrationSnapshot = computed(() =>
+  platformStore.platform.stagedScenarioDraft?.orchestrationSnapshot ?? null
+);
+
+const recommendedNodeIds = computed(() => {
+  const ids = new Set<string>();
+  orchestrationSnapshot.value?.draft.selectedResources.forEach((resource) => {
+    ids.add(resource.resourceId);
+  });
+  return ids;
+});
+```
+
+再将推荐关系改为：
+
+```ts
+const recommendedRelationshipIds = computed(() => {
+  const ids = new Set<string>();
+  orchestrationSnapshot.value?.draft.chains.forEach((chain) => {
+    chain.relationshipIds.forEach((relationshipId) => ids.add(relationshipId));
+  });
+  return ids;
+});
+```
+
+预期：图谱中的“本次推荐关系”必须来自 AI Workflow 的 `chains.relationshipIds`，不是根据当前可见节点碰撞推导。
+
+- [ ] **步骤 7：推荐解释面板显示角色、理由、能力、证据**
+
+在 `ResourceGraphModule.vue` 的右侧面板增加“推荐解释”区域：
+
+```vue
+<section class="recommendation-explanations">
+  <div v-for="item in orchestrationSnapshot?.explanations" :key="item.resourceId">
+    <strong>{{ nodeById.get(item.resourceId)?.name ?? item.resourceId }}</strong>
+    <span>{{ item.role }}</span>
+    <p>{{ item.reason }}</p>
+    <small>能力：{{ item.matchedCapabilities.join('、') }}</small>
+    <small>证据：{{ item.evidenceIds.join('、') }}</small>
+  </div>
+</section>
+```
+
+预期：用户点击图谱时能看到“为什么推荐该资源”，而不是只看到资源属性。
+
+- [ ] **步骤 8：工具接口文档补充 staging 入参要求**
+
+在 `docs/ai-workflow-tool-api.md` 中补充：
+
+```md
+## `/api/scenario/validate-and-stage`
+
+调用方必须传入 `TacticalScenarioDraft.orchestrationSnapshot`，其中包含：
+
+- `draft.selectedResources`
+- `draft.chains`
+- `draft.evidence`
+- `explanations`
+
+如果缺少该字段，前端只能展示想定草案，不能解释推荐依据。
+```
+
+预期：Dify/AI Workflow 对接时知道必须回传完整推荐解释数据。
+
+- [ ] **步骤 9：验证**
+
+运行：
+
+```bash
+npm --workspace @ai-blue-simu-sys/web run typecheck
+npm run build
+```
+
+预期：
+
+- 类型检查通过。
+- 根目录构建通过。
+- 图谱页统计中的“推荐节点”和“推荐关系”来自 `orchestrationSnapshot`。
+- 点击推荐节点能看到角色、理由、能力和 evidence。
+
+### 13.2 本阶段不做
+
+- 不接真实图数据库。
+- 不做完整 RAG 入库。
+- 不做 Dify 工作流导出文件。
+- 不做自动跳过人工确认。
+- 不做复杂替代资源打分模型。

@@ -6,8 +6,10 @@ const {
   leftPanelOpen,
   rightPanelOpen,
   rightPanelActiveTab,
+  resourceGraphOpen,
   toggleLeftPanel,
   toggleRightPanel,
+  toggleResourceGraph,
   setRightPanelTab,
 } = usePanelState();
 
@@ -43,6 +45,10 @@ function handleResourceRightClick() {
   } else {
     setRightPanelTab('resource' as RightPanelTab);
   }
+}
+
+function handleGraphRightClick() {
+  toggleResourceGraph();
 }
 </script>
 
@@ -94,6 +100,13 @@ function handleResourceRightClick() {
       @click="handleResourceRightClick"
     >
       资源树
+    </ToolbarButton>
+    <ToolbarButton
+      :active="resourceGraphOpen"
+      icon="◎"
+      @click="handleGraphRightClick"
+    >
+      资源图谱
     </ToolbarButton>
   </div>
 </template>

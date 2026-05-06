@@ -10,6 +10,7 @@ import TopToolbar from '../components/toolbar/TopToolbar.vue';
 import MapModule from '../components/map/MapModule.vue';
 import LeftPanelModule from '../components/left-panel/LeftPanelModule.vue';
 import RightPanelModule from '../components/right-panel/RightPanelModule.vue';
+import ResourceGraphModule from '../components/right-panel/ResourceGraphModule.vue';
 import DeploymentConfigModal from '../components/deployment/DeploymentConfigModal.vue';
 import LeftSidebar from '../components/left-sidebar/LeftSidebar.vue';
 import DecisionPanel from '../components/simulation/DecisionPanel.vue';
@@ -18,11 +19,13 @@ import { MapRenderer } from '../services/map-renderer';
 import { ExecutionEngine } from '../services/execution-engine';
 import { useTacticalScenarioStore } from '../stores/tactical-scenario';
 import { useActionPlanStore } from '../stores/action-plan';
+import { usePanelState } from '../composables/usePanelState';
 import type { RouteDecision } from '../services/ai-decision-visualizer';
 
 const store = usePlatformStore();
 const tacticalStore = useTacticalScenarioStore();
 const actionPlanStore = useActionPlanStore();
+const { resourceGraphOpen, closeResourceGraph } = usePanelState();
 const { entities, createEntity, updateEntity, deleteEntity } = useEntityState();
 const { execute, undo, redo, canUndo, canRedo } = useCommandSystem();
 
@@ -297,6 +300,12 @@ const scenarioEntities = computed(() => {
     <!-- Right panel: AI assistant + resource tree -->
     <RightPanelModule />
 
+    <Transition name="graph-modal">
+      <div v-if="resourceGraphOpen" class="graph-modal-layer" @click.self="closeResourceGraph">
+        <ResourceGraphModule modal @close="closeResourceGraph" />
+      </div>
+    </Transition>
+
     <!-- AI Decision Panel -->
     <DecisionPanel
       :selected-route-id="selectedRouteId"
@@ -336,5 +345,30 @@ const scenarioEntities = computed(() => {
   overflow: hidden;
   position: relative;
   background: #040b14;
+}
+
+.graph-modal-layer {
+  position: fixed;
+  inset: 58px 34px 28px;
+  z-index: 1300;
+  padding: 0;
+  border: 1px solid rgba(142, 164, 201, 0.22);
+  border-radius: 16px;
+  background: rgba(4, 11, 20, 0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.graph-modal-enter-active,
+.graph-modal-leave-active {
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+
+.graph-modal-enter-from,
+.graph-modal-leave-to {
+  opacity: 0;
+  transform: scale(0.985);
 }
 </style>

@@ -198,6 +198,120 @@ export interface EnvironmentConfig {
   events: EnvironmentEvent[];
 }
 
+// --- 可视化效果配置 ---
+
+export type ExplosionEffectType = 'missile-impact' | 'ship-impact' | 'ground-impact';
+
+export interface WeaponEffectConfig {
+  weaponId: string;
+  trailEnabled: boolean;
+  trailColor: string;
+  trailWidth: number;
+  iconStyle: 'missile' | 'anti-ship' | 'bomb' | 'rocket';
+}
+
+export interface ExplosionEffectConfig {
+  type: ExplosionEffectType;
+  radius: number;
+  durationMs: number;
+  innerColor: string;
+  outerColor: string;
+}
+
+export interface WeaponEffectsConfig {
+  enabled: boolean;
+  items: WeaponEffectConfig[];
+}
+
+export interface ExplosionEffectsConfig {
+  enabled: boolean;
+  items: ExplosionEffectConfig[];
+}
+
+export interface SensorEffectsConfig {
+  enabled: boolean;
+  radarScanEnabled: boolean;
+  scanSpeedDegPerSec: number;
+  beamWidthDeg: number;
+  color?: string;
+}
+
+export type RadarTrackingTargetType = 'enemy-aircraft' | 'enemy-missile';
+
+export interface RadarTrackingConfig {
+  enabled: boolean;
+  targetTypes: RadarTrackingTargetType[];
+  maxTracks: number;
+}
+
+export interface ElectronicWarfareEffectsConfig {
+  enabled: boolean;
+  pulseEnabled: boolean;
+  pulseColor: string;
+  pulseDurationMs: number;
+}
+
+export interface WeaponRuntimeConfig {
+  timeScaleForDemo?: number;
+  forceImpactWithinPhase?: boolean;
+}
+
+export interface VisualEffectsPerformanceConfig {
+  mode: 'high' | 'medium' | 'low';
+  maxActiveExplosions: number;
+  maxActiveScans: number;
+  maxActivePulses: number;
+  maxActiveTrails: number;
+}
+
+export interface VisualEffectsConfig {
+  enabled?: boolean;
+  weaponEffects: WeaponEffectsConfig;
+  explosionEffects: ExplosionEffectsConfig;
+  sensorEffects?: SensorEffectsConfig;
+  electronicWarfareEffects?: ElectronicWarfareEffectsConfig;
+  weaponRuntime?: WeaponRuntimeConfig;
+  performance?: VisualEffectsPerformanceConfig;
+}
+
+export type EmitterKind = 'radar' | 'electronic-jamming';
+export type EmitterMode = 'omni' | 'sector-search' | 'track';
+
+export interface EmitterVolume {
+  id: string;
+  sourceEntityId: string;
+  kind: EmitterKind;
+  mode: EmitterMode;
+  side: ForceSide;
+  position: GeoPosition;
+  headingDeg: number;
+  rangeMeters: number;
+  azimuthCenterDeg: number;
+  azimuthWidthDeg: number;
+  elevationMinDeg: number;
+  elevationMaxDeg: number;
+  pulseCycleMs: number;
+  active: boolean;
+}
+
+export interface ExplosionRuntimeState {
+  id: string;
+  type: ExplosionEffectType;
+  position: GeoPosition;
+  startTimeMs: number;
+  damage: number;
+}
+
+export interface RuntimeVisualUpdate {
+  virtualTimeMs: number;
+  executionStatus: ExecutionStatus;
+  entities: Map<string, GeoPosition>;
+  weapons: Weapon[];
+  sensorEmitters: EmitterVolume[];
+  ewEmitters: EmitterVolume[];
+  explosions: ExplosionRuntimeState[];
+}
+
 // --- 交互配置类型 ---
 
 export interface GroupMember {
@@ -435,7 +549,14 @@ export type ForceSide = 'red' | 'blue';
 /**
  * 打击事件类型
  */
-export type TacticalEventType = 'movement' | 'detection' | 'attack' | 'destruction';
+export type TacticalEventType =
+  | 'movement'
+  | 'detection'
+  | 'attack'
+  | 'damage'
+  | 'destruction'
+  | 'weapon-launch'
+  | 'weapon-impact';
 
 /**
  * 战术事件
@@ -446,6 +567,128 @@ export interface TacticalEvent {
   sourceEntityId: string;
   targetEntityId?: string;
   detail: string;              // 人类可读描述
+}
+
+/**
+ * 武器类型
+ */
+export type WeaponType =
+  | 'aam-short'
+  | 'aam-medium'
+  | 'aam-long'
+  | 'asm'
+  | 'agm'
+  | 'sam-short'
+  | 'sam-medium'
+  | 'sam-long'
+  | 'ssm'
+  | 'cruise'
+  | 'ballistic'
+  | 'torpedo'
+  | 'bomb'
+  | 'rocket';
+
+/**
+ * 制导方式
+ */
+export type GuidanceType =
+  | 'active-radar'
+  | 'semi-active'
+  | 'passive-radar'
+  | 'infrared'
+  | 'tv'
+  | 'laser'
+  | 'gps'
+  | 'inertial'
+  | 'wire'
+  | 'acoustic';
+
+/**
+ * 三维速度矢量
+ */
+export interface Vector3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * 武器规格
+ */
+export interface WeaponSpec {
+  id: string;
+  type: WeaponType;
+  name: string;
+  guidance: GuidanceType;
+  maxRange: number;
+  minRange: number;
+  cruiseSpeedMps: number;
+  terminalSpeedMps: number;
+  acceleration: number;
+  turnRate: number;
+  warheadWeight: number;
+  killRadius: number;
+  launchDelay: number;
+  lockTime: number;
+}
+
+export type WeaponStatus =
+  | 'launching'
+  | 'boosting'
+  | 'cruising'
+  | 'terminal'
+  | 'hit'
+  | 'miss'
+  | 'intercepted'
+  | 'fuel-out';
+
+/**
+ * 武器实例
+ */
+export interface Weapon {
+  id: string;
+  spec: WeaponSpec;
+  launcherId: string;
+  targetId: string;
+  launchTime: number;
+  impactTime: number;
+  launchPosition: GeoPosition;
+  currentPosition: GeoPosition;
+  targetPosition: GeoPosition;
+  velocity: Vector3D;
+  status: WeaponStatus;
+  trajectory: GeoPosition[];
+  fuelRemaining: number;
+}
+
+export interface WeaponLaunchEvent extends TacticalEvent {
+  type: 'weapon-launch';
+  weaponId: string;
+  launcherId: string;
+  targetEntityId: string;
+  weaponType: WeaponType;
+}
+
+export interface WeaponImpactEvent extends TacticalEvent {
+  type: 'weapon-impact';
+  weaponId: string;
+  targetEntityId: string;
+  hitPosition: GeoPosition;
+  damage: number;
+  weaponType: WeaponType;
+}
+
+export interface DamageEvent extends TacticalEvent {
+  type: 'damage';
+  targetEntityId: string;
+  damage: number;
+  remainingHealth: number;
+}
+
+export interface EntityDestroyedEvent extends TacticalEvent {
+  type: 'destruction';
+  targetEntityId: string;
+  damage: number;
 }
 
 /**
@@ -480,6 +723,9 @@ export interface EntitySpec {
   type: PlatformType;
   side: ForceSide;
   position: GeoPosition;
+  health?: number;
+  maxHealth?: number;
+  armor?: number;
   loadout?: {
     weapons: string[];
     sensors: string[];
@@ -520,6 +766,7 @@ export interface DetectionZone {
   center: GeoPosition;
   radiusMeters: number;
   label?: string;
+  tracking?: RadarTrackingConfig;
 }
 
 /**
@@ -575,6 +822,7 @@ export interface TacticalScenario {
   tasks?: TaskConfig[];
   environment?: EnvironmentConfig;
   interactions?: InteractionConfig;
+  visualEffects?: VisualEffectsConfig;
 }
 
 /**

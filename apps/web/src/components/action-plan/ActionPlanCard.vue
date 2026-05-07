@@ -284,6 +284,7 @@ function getStatusLabel(status: string): string {
 .event-movement { background: rgba(0,214,201,0.15); color: #00d6c9; }
 .event-detection { background: rgba(107,196,255,0.15); color: #6bc4ff; }
 .event-attack { background: rgba(255,68,68,0.15); color: #ff6b6b; }
+.event-damage { background: rgba(255,159,28,0.18); color: #ffb347; }
 .event-destruction { background: rgba(255,0,0,0.2); color: #ff4444; }
 .event-detail { color: #8ea4c9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

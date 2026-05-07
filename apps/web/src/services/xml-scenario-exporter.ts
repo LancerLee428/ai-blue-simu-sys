@@ -19,6 +19,7 @@ import type {
   DetectionZone,
   StrikeTask,
   Phase,
+  VisualEffectsConfig,
 } from '../types/tactical-scenario';
 import { normalizeTacticalScenario } from './tactical-scenario-normalizer';
 
@@ -226,6 +227,28 @@ function exportEquipment(doc: Document, entity: EntitySpec): Element {
     eqEl.appendChild(elAttr(doc, 'TaskRef', { taskId: entity.taskRef }));
   }
 
+  if (entity.loadout && (entity.loadout.weapons.length > 0 || entity.loadout.sensors.length > 0)) {
+    const loadoutEl = doc.createElement('Loadout');
+
+    if (entity.loadout.weapons.length > 0) {
+      const weaponsEl = doc.createElement('Weapons');
+      for (const weaponId of entity.loadout.weapons) {
+        weaponsEl.appendChild(elAttr(doc, 'Weapon', { id: weaponId }));
+      }
+      loadoutEl.appendChild(weaponsEl);
+    }
+
+    if (entity.loadout.sensors.length > 0) {
+      const sensorsEl = doc.createElement('Sensors');
+      for (const sensorId of entity.loadout.sensors) {
+        sensorsEl.appendChild(elAttr(doc, 'Sensor', { id: sensorId }));
+      }
+      loadoutEl.appendChild(sensorsEl);
+    }
+
+    eqEl.appendChild(loadoutEl);
+  }
+
   return eqEl;
 }
 
@@ -404,6 +427,82 @@ function exportEnvironment(doc: Document, root: Element, env: EnvironmentConfig)
   root.appendChild(envEl);
 }
 
+function exportVisualEffects(doc: Document, root: Element, visualEffects: VisualEffectsConfig) {
+  const effectsEl = elAttr(doc, 'VisualEffects', {
+    enabled: String(visualEffects.enabled !== false),
+  });
+
+  const weaponEffectsEl = elAttr(doc, 'WeaponEffects', {
+    enabled: String(visualEffects.weaponEffects.enabled),
+  });
+  for (const effect of visualEffects.weaponEffects.items) {
+    weaponEffectsEl.appendChild(elAttr(doc, 'WeaponEffect', {
+      weaponId: effect.weaponId,
+      trailEnabled: String(effect.trailEnabled),
+      trailColor: effect.trailColor,
+      trailWidth: String(effect.trailWidth),
+      iconStyle: effect.iconStyle,
+    }));
+  }
+  effectsEl.appendChild(weaponEffectsEl);
+
+  const explosionEffectsEl = elAttr(doc, 'ExplosionEffects', {
+    enabled: String(visualEffects.explosionEffects.enabled),
+  });
+  for (const effect of visualEffects.explosionEffects.items) {
+    explosionEffectsEl.appendChild(elAttr(doc, 'ExplosionEffect', {
+      type: effect.type,
+      radius: String(effect.radius),
+      durationMs: String(effect.durationMs),
+      innerColor: effect.innerColor,
+      outerColor: effect.outerColor,
+    }));
+  }
+  effectsEl.appendChild(explosionEffectsEl);
+
+  if (visualEffects.sensorEffects) {
+    effectsEl.appendChild(elAttr(doc, 'SensorEffects', {
+      enabled: String(visualEffects.sensorEffects.enabled),
+      radarScanEnabled: String(visualEffects.sensorEffects.radarScanEnabled),
+      scanSpeedDegPerSec: String(visualEffects.sensorEffects.scanSpeedDegPerSec),
+      beamWidthDeg: String(visualEffects.sensorEffects.beamWidthDeg),
+      ...(visualEffects.sensorEffects.color ? { color: visualEffects.sensorEffects.color } : {}),
+    }));
+  }
+
+  if (visualEffects.electronicWarfareEffects) {
+    effectsEl.appendChild(elAttr(doc, 'ElectronicWarfareEffects', {
+      enabled: String(visualEffects.electronicWarfareEffects.enabled),
+      pulseEnabled: String(visualEffects.electronicWarfareEffects.pulseEnabled),
+      pulseColor: visualEffects.electronicWarfareEffects.pulseColor,
+      pulseDurationMs: String(visualEffects.electronicWarfareEffects.pulseDurationMs),
+    }));
+  }
+
+  if (visualEffects.weaponRuntime) {
+    effectsEl.appendChild(elAttr(doc, 'WeaponRuntime', {
+      ...(visualEffects.weaponRuntime.timeScaleForDemo !== undefined
+        ? { timeScaleForDemo: String(visualEffects.weaponRuntime.timeScaleForDemo) }
+        : {}),
+      ...(visualEffects.weaponRuntime.forceImpactWithinPhase !== undefined
+        ? { forceImpactWithinPhase: String(visualEffects.weaponRuntime.forceImpactWithinPhase) }
+        : {}),
+    }));
+  }
+
+  if (visualEffects.performance) {
+    effectsEl.appendChild(elAttr(doc, 'Performance', {
+      mode: visualEffects.performance.mode,
+      maxActiveExplosions: String(visualEffects.performance.maxActiveExplosions),
+      maxActiveScans: String(visualEffects.performance.maxActiveScans),
+      maxActivePulses: String(visualEffects.performance.maxActivePulses),
+      maxActiveTrails: String(visualEffects.performance.maxActiveTrails),
+    }));
+  }
+
+  root.appendChild(effectsEl);
+}
+
 function exportInteractions(doc: Document, root: Element, interactions: InteractionConfig) {
   const intEl = doc.createElement('Interactions');
 
@@ -505,9 +604,22 @@ function exportDetectionZones(doc: Document, root: Element, zones: DetectionZone
       altitude: String(zone.center.altitude ?? 0)
     });
     zoneEl.appendChild(centerEl);
+    if (zone.tracking) {
+      zoneEl.appendChild(elAttr(doc, 'Tracking', getDetectionZoneTrackingAttributes(zone)));
+    }
     zonesEl.appendChild(zoneEl);
   }
   root.appendChild(zonesEl);
+}
+
+export function getDetectionZoneTrackingAttributes(zone: DetectionZone): Record<string, string> {
+  if (!zone.tracking) return {};
+
+  return {
+    enabled: String(zone.tracking.enabled),
+    targetTypes: zone.tracking.targetTypes.join(','),
+    maxTracks: String(zone.tracking.maxTracks),
+  };
 }
 
 function exportStrikeTasks(doc: Document, root: Element, tasks: StrikeTask[]) {
@@ -549,6 +661,12 @@ function exportPhases(doc: Document, root: Element, phases: Phase[]) {
         };
         if (ev.targetEntityId) {
           evAttr.targetEntityId = ev.targetEntityId;
+        }
+        if ('weaponId' in ev && (ev as any).weaponId) {
+          evAttr.weaponId = String((ev as any).weaponId);
+        }
+        if ('weaponType' in ev && (ev as any).weaponType) {
+          evAttr.weaponType = String((ev as any).weaponType);
         }
         eventsEl.appendChild(elAttr(doc, 'Event', evAttr));
       }
@@ -642,12 +760,17 @@ export class XmlScenarioExporter {
       exportDetectionZones(doc, root, scenario.detectionZones);
     }
 
-    // 9. StrikeTasks
+    // 9. VisualEffects
+    if (scenario.visualEffects) {
+      exportVisualEffects(doc, root, scenario.visualEffects);
+    }
+
+    // 10. StrikeTasks
     if (scenario.strikeTasks?.length) {
       exportStrikeTasks(doc, root, scenario.strikeTasks);
     }
 
-    // 10. Phases
+    // 11. Phases
     if (scenario.phases?.length) {
       exportPhases(doc, root, scenario.phases);
     }

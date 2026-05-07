@@ -81,11 +81,26 @@ export class ElectronicWarfareManager {
     if (!zone || !zone.active) return null;
 
     return {
+      entityId: zone.entityId,
       position: zone.position,
       radius: zone.radius,
+      power: zone.power,
       color: 'rgba(255, 100, 0, 0.3)', // 橙色半透明
       pulseSpeed: 2.0, // 脉冲动画速度
     };
+  }
+
+  getActiveJammerZones(): JammerVisualization[] {
+    return Array.from(this.jammerZones.values())
+      .filter(zone => zone.active)
+      .map(zone => ({
+        entityId: zone.entityId,
+        position: zone.position,
+        radius: zone.radius,
+        power: zone.power,
+        color: 'rgba(255, 100, 0, 0.3)',
+        pulseSpeed: 2.0,
+      }));
   }
 
   /**
@@ -149,8 +164,10 @@ interface JammerZone {
 }
 
 interface JammerVisualization {
+  entityId: string;
   position: GeoPosition;
   radius: number;
+  power: number;
   color: string;
   pulseSpeed: number;
 }

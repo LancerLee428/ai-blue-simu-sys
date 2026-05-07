@@ -7,12 +7,31 @@ import type {
   TacticalEvent,
   ForceSide,
   EntityStateInPhase,
+  WeaponImpactEvent,
+  WeaponLaunchEvent,
+  ExplosionEffectType,
+  DamageEvent,
+  EntityDestroyedEvent,
+  EmitterVolume,
+  ExplosionRuntimeState,
+  Weapon,
 } from '../types/tactical-scenario';
 import type { MapRenderer } from './map-renderer';
 import { DetectionInteraction, type DetectionEvent } from './detection-interaction';
 import { CollisionDetector } from './collision-detector';
 import { WeatherSystem } from './weather-system';
 import { ElectronicWarfareManager } from './electronic-warfare';
+import { WeaponSystem } from './weapon-system';
+import { DamageCalculator } from './damage-calculator';
+import {
+  calculateElevationDeg,
+  calculateHeadingDeg,
+  getScenarioVirtualTimeMs,
+  isRadarDetectionEmitterSource,
+  normalizeRadarTrackingConfig,
+  selectRadarTrackingTargets,
+  shouldIncludeRuntimeEmitters,
+} from './runtime-visual-math';
 
 /**
  * 线性插值
@@ -63,6 +82,8 @@ export class ExecutionEngine {
   private collisionDetector: CollisionDetector;
   private weatherSystem: WeatherSystem;
   private ewManager: ElectronicWarfareManager;
+  private weaponSystem: WeaponSystem;
+  private damageCalculator: DamageCalculator;
   private scenario: TacticalScenario | null = null;
   private status: ExecutionStatus = 'idle';
   private currentPhaseIndex = 0;
@@ -81,17 +102,31 @@ export class ExecutionEngine {
   // 实体当前位置快照（跨阶段持久保存）
   private entityPositions = new Map<string, GeoPosition>();
   private entityStatuses = new Map<string, string>();
+  private entityHealth = new Map<string, number>();
 
   // 当前阶段的实体移动计划（每次进入新阶段时重建）
   private currentPhaseMoves: PhaseEntityMove[] = [];
 
   // 防止同一相位内事件重复触发
   private firedEventsThisPhase = new Set<string>();
+  private firedWeaponLaunchesThisPhase = new Set<string>();
+  private firedWeaponImpactsThisPhase = new Set<string>();
+  private activeExplosions = new Map<string, ExplosionRuntimeState>();
+  private lastRuntimeWeapons: Weapon[] = [];
+  private runtimeEmitterDebugVisible: boolean | null = null;
 
   // 时间控制
   private speed: number = 1;
   private lastRealTime: number = 0;
   private virtualElapsedMs: number = 0; // 当前阶段内已过去的虚拟时间（ms）
+
+  private getGlobalVirtualTimeMs(): number {
+    return getScenarioVirtualTimeMs(
+      this.scenario?.phases ?? [],
+      this.currentPhaseIndex,
+      this.virtualElapsedMs,
+    );
+  }
 
   constructor(viewer: Cesium.Viewer, renderer: MapRenderer) {
     this.viewer = viewer;
@@ -100,6 +135,8 @@ export class ExecutionEngine {
     this.collisionDetector = new CollisionDetector();
     this.weatherSystem = new WeatherSystem();
     this.ewManager = new ElectronicWarfareManager();
+    this.weaponSystem = new WeaponSystem();
+    this.damageCalculator = new DamageCalculator();
 
     // 设置探测事件回调
     this.detectionInteraction.setOnDetectionEvent((event) => {
@@ -131,6 +168,7 @@ export class ExecutionEngine {
       force.entities.forEach((entity) => {
         this.entityPositions.set(entity.id, { ...entity.position });
         this.entityStatuses.set(entity.id, 'planned');
+        this.entityHealth.set(entity.id, entity.health ?? entity.maxHealth ?? 0);
       });
     });
 
@@ -165,11 +203,16 @@ export class ExecutionEngine {
       this.virtualElapsedMs = 0;
       this.currentPhaseIndex = 0;
       this.firedEventsThisPhase.clear();
+      this.firedWeaponLaunchesThisPhase.clear();
+      this.firedWeaponImpactsThisPhase.clear();
+      this.activeExplosions.clear();
+      this.lastRuntimeWeapons = [];
       this.detectionInteraction.reset();
       // 实体位置回到起始
       this.scenario.forces.forEach((force) => {
         force.entities.forEach((entity) => {
           this.entityPositions.set(entity.id, { ...entity.position });
+          this.entityHealth.set(entity.id, entity.health ?? entity.maxHealth ?? 0);
         });
       });
     }
@@ -180,6 +223,7 @@ export class ExecutionEngine {
     this.status = 'running';
     // 关键修复：无论从哪个状态开始播放，都重置时间基准
     this.lastRealTime = performance.now();
+    this.syncRuntimeVisuals(this.lastRuntimeWeapons);
     this.notifyStatusChange();
 
     if (this.animationFrameId === null) {
@@ -196,6 +240,7 @@ export class ExecutionEngine {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    this.syncRuntimeVisuals(this.lastRuntimeWeapons);
     this.notifyStatusChange();
   }
 
@@ -211,7 +256,12 @@ export class ExecutionEngine {
     this.virtualElapsedMs = 0;
     this.currentPhaseIndex = 0;
     this.firedEventsThisPhase.clear();
+    this.firedWeaponLaunchesThisPhase.clear();
+    this.firedWeaponImpactsThisPhase.clear();
+    this.activeExplosions.clear();
+    this.lastRuntimeWeapons = [];
     this.status = 'idle';
+    this.syncRuntimeVisuals([]);
 
     // 将所有实体复位到初始位置
     if (this.scenario) {
@@ -239,9 +289,14 @@ export class ExecutionEngine {
       this.currentPhaseIndex++;
       this.virtualElapsedMs = 0;
       this.firedEventsThisPhase.clear();
+      this.firedWeaponLaunchesThisPhase.clear();
+      this.firedWeaponImpactsThisPhase.clear();
+      this.activeExplosions.clear();
+      this.lastRuntimeWeapons = [];
       this.onPhaseComplete?.(phase);
     } else {
       this.status = 'completed';
+      this.syncRuntimeVisuals([]);
       this.onPhaseComplete?.(phase);
     }
     this.notifyStatusChange();
@@ -255,6 +310,11 @@ export class ExecutionEngine {
     this.currentPhaseIndex--;
     this.virtualElapsedMs = 0;
     this.firedEventsThisPhase.clear();
+    this.firedWeaponLaunchesThisPhase.clear();
+    this.firedWeaponImpactsThisPhase.clear();
+    this.activeExplosions.clear();
+    this.lastRuntimeWeapons = [];
+    this.syncRuntimeVisuals([]);
     this.notifyStatusChange();
   }
 
@@ -283,10 +343,16 @@ export class ExecutionEngine {
     this.virtualElapsedMs = 0;
     this.entityPositions.clear();
     this.entityStatuses.clear();
+    this.entityHealth.clear();
     this.currentPhaseMoves = [];
     this.firedEventsThisPhase.clear();
+    this.firedWeaponLaunchesThisPhase.clear();
+    this.firedWeaponImpactsThisPhase.clear();
+    this.activeExplosions.clear();
+    this.lastRuntimeWeapons = [];
     this.detectionInteraction.reset();
     this.ewManager.reset();
+    this.syncRuntimeVisuals([]);
     this.notifyStatusChange();
   }
 
@@ -323,6 +389,191 @@ export class ExecutionEngine {
   getWeatherSystem() { return this.weatherSystem; }
   getEWManager() { return this.ewManager; }
   getCollisionDetector() { return this.collisionDetector; }
+
+  setRuntimeEmitterDebugVisible(visible: boolean | null): void {
+    this.runtimeEmitterDebugVisible = visible;
+    this.syncRuntimeVisuals(this.lastRuntimeWeapons);
+  }
+
+  private createSensorEmitters(): EmitterVolume[] {
+    if (!this.scenario) return [];
+    const entities = this.scenario.forces.flatMap(force => force.entities);
+    const maxScans = this.scenario.visualEffects?.performance?.maxActiveScans ?? 8;
+
+    return this.scenario.detectionZones
+      .flatMap((zone): EmitterVolume[] => {
+        const entity = entities.find(item => item.id === zone.entityId);
+        if (!entity) return [];
+        if (!isRadarDetectionEmitterSource({
+          entityType: entity.type,
+          sensors: entity.loadout?.sensors,
+          label: zone.label,
+        })) return [];
+        const position = this.entityPositions.get(zone.entityId) ?? entity.position;
+        const tracking = normalizeRadarTrackingConfig(zone.tracking);
+        const targetEmitters = selectRadarTrackingTargets({
+          radarSide: zone.side,
+          radarPosition: position,
+          rangeMeters: zone.radiusMeters,
+          tracking,
+          entities: entities.map(item => ({
+            id: item.id,
+            side: item.side,
+            type: item.type,
+            position: this.entityPositions.get(item.id) ?? item.position,
+          })),
+          weapons: this.lastRuntimeWeapons.map(weapon => ({
+            id: weapon.id,
+            launcherSide: this.getEntitySide(weapon.launcherId) ?? zone.side,
+            currentPosition: weapon.currentPosition,
+          })),
+        }).map((target): EmitterVolume => this.createTrackingEmitter({
+          id: `radar-${zone.entityId}-${target.category}-${target.id}`,
+          sourceEntityId: zone.entityId,
+          side: zone.side,
+          position,
+          targetPosition: target.position,
+          rangeMeters: Math.min(zone.radiusMeters, Math.max(1, target.distanceMeters)),
+        }));
+
+        if (targetEmitters.length > 0) return targetEmitters;
+        if (this.runtimeEmitterDebugVisible !== true) return [];
+
+        return [{
+          id: `radar-${zone.entityId}`,
+          sourceEntityId: zone.entityId,
+          kind: 'radar',
+          mode: this.getEmitterModeForEntity(entity.type),
+          side: zone.side,
+          position,
+          headingDeg: position.heading ?? entity.position.heading ?? 0,
+          rangeMeters: zone.radiusMeters,
+          azimuthCenterDeg: 0,
+          azimuthWidthDeg: this.getAzimuthWidthForEntity(entity.type),
+          elevationMinDeg: this.getElevationMinForEntity(entity.type),
+          elevationMaxDeg: this.getElevationMaxForEntity(entity.type),
+          pulseCycleMs: this.getRadarScanCycleMs(),
+          active: true,
+        }];
+      })
+      .slice(0, maxScans);
+  }
+
+  private createTrackingEmitter(args: {
+    id: string;
+    sourceEntityId: string;
+    side: ForceSide;
+    position: GeoPosition;
+    targetPosition: GeoPosition;
+    rangeMeters: number;
+  }): EmitterVolume {
+    const elevation = calculateElevationDeg(args.position, args.targetPosition);
+    return {
+      id: args.id,
+      sourceEntityId: args.sourceEntityId,
+      kind: 'radar',
+      mode: 'track',
+      side: args.side,
+      position: args.position,
+      headingDeg: calculateHeadingDeg(args.position, args.targetPosition),
+      rangeMeters: args.rangeMeters,
+      azimuthCenterDeg: 0,
+      azimuthWidthDeg: 10,
+      elevationMinDeg: elevation - 5,
+      elevationMaxDeg: elevation + 5,
+      pulseCycleMs: this.getRadarScanCycleMs(),
+      active: true,
+    };
+  }
+
+  private getEntitySide(entityId: string): ForceSide | null {
+    if (!this.scenario) return null;
+    for (const force of this.scenario.forces) {
+      if (force.entities.some(entity => entity.id === entityId)) return force.side;
+    }
+    return null;
+  }
+
+  private createEWEmitters(): EmitterVolume[] {
+    if (!this.scenario) return [];
+    const entities = this.scenario.forces.flatMap(force => force.entities);
+    const maxPulses = this.scenario.visualEffects?.performance?.maxActivePulses ?? 4;
+    const pulseCycleMs = this.scenario.visualEffects?.electronicWarfareEffects?.pulseDurationMs ?? 2_200;
+
+    return this.ewManager.getActiveJammerZones()
+      .map((zone): EmitterVolume | null => {
+        const entity = entities.find(item => item.id === zone.entityId);
+        if (!entity) return null;
+        const position = this.entityPositions.get(entity.id) ?? zone.position;
+
+        return {
+          id: `ew-${entity.id}`,
+          sourceEntityId: entity.id,
+          kind: 'electronic-jamming',
+          mode: 'omni',
+          side: entity.side,
+          position,
+          headingDeg: position.heading ?? entity.position.heading ?? 0,
+          rangeMeters: zone.radius,
+          azimuthCenterDeg: 0,
+          azimuthWidthDeg: 360,
+          elevationMinDeg: entity.type === 'air-jammer' ? -20 : 0,
+          elevationMaxDeg: entity.type === 'air-jammer' ? 65 : 45,
+          pulseCycleMs,
+          active: true,
+        };
+      })
+      .filter((emitter): emitter is EmitterVolume => emitter !== null)
+      .slice(0, maxPulses);
+  }
+
+  private getEmitterModeForEntity(type: string): EmitterVolume['mode'] {
+    return type === 'air-fighter' || type === 'air-multirole' ? 'sector-search' : 'omni';
+  }
+
+  private getAzimuthWidthForEntity(type: string): number {
+    if (type === 'air-fighter') return 120;
+    if (type === 'air-multirole') return 140;
+    if (type === 'ship-destroyer') return 240;
+    return 360;
+  }
+
+  private getElevationMinForEntity(type: string): number {
+    if (type === 'air-fighter') return -20;
+    if (type === 'air-multirole') return -30;
+    if (type === 'ground-radar') return 2;
+    if (type === 'ground-sam') return 5;
+    return 0;
+  }
+
+  private getElevationMaxForEntity(type: string): number {
+    if (type === 'air-fighter') return 70;
+    if (type === 'air-multirole') return 80;
+    if (type === 'air-aew') return 60;
+    if (type === 'ship-carrier') return 75;
+    return 85;
+  }
+
+  private getRadarScanCycleMs(): number {
+    const speed = this.scenario?.visualEffects?.sensorEffects?.scanSpeedDegPerSec ?? 60;
+    return Math.max(1_000, Math.round((360 / Math.max(1, speed)) * 1000));
+  }
+
+  private syncRuntimeVisuals(
+    weapons: Weapon[] = [],
+    includeEmitters = shouldIncludeRuntimeEmitters(this.status, this.runtimeEmitterDebugVisible),
+  ): void {
+    this.lastRuntimeWeapons = weapons;
+    this.renderer.updateRuntimeVisuals({
+      virtualTimeMs: this.getGlobalVirtualTimeMs(),
+      executionStatus: this.status,
+      entities: new Map(this.entityPositions),
+      weapons,
+      sensorEmitters: includeEmitters ? this.createSensorEmitters() : [],
+      ewEmitters: includeEmitters ? this.createEWEmitters() : [],
+      explosions: Array.from(this.activeExplosions.values()),
+    });
+  }
 
   /**
    * 处理探测事件（P0 功能：视觉反馈）
@@ -576,6 +827,75 @@ export class ExecutionEngine {
     });
   }
 
+  private findEntityPositionAtTime(entityId: string, virtualMs: number): GeoPosition | null {
+    const move = this.currentPhaseMoves.find((item) => item.entityId === entityId);
+    if (move) {
+      const t = Math.max(0, Math.min(1, virtualMs / move.durationMs));
+      return lerpPosition(move.from, move.to, t);
+    }
+
+    return this.entityPositions.get(entityId) ?? null;
+  }
+
+  private getImpactEffectType(targetEntityId: string): ExplosionEffectType {
+    if (!this.scenario) return 'missile-impact';
+    for (const force of this.scenario.forces) {
+      const target = force.entities.find(entity => entity.id === targetEntityId);
+      if (!target) continue;
+      if (target.type.startsWith('ship-')) return 'ship-impact';
+      if (target.type.startsWith('ground-') || target.type.startsWith('facility-')) return 'ground-impact';
+      return 'missile-impact';
+    }
+    return 'missile-impact';
+  }
+
+  private applyImpactDamage(event: WeaponImpactEvent): void {
+    if (!this.scenario) return;
+
+    for (const force of this.scenario.forces) {
+      const target = force.entities.find(entity => entity.id === event.targetEntityId);
+      if (!target) continue;
+
+      const currentHealth = this.entityHealth.get(target.id) || target.health || target.maxHealth;
+      const result = this.damageCalculator.applyDamage({
+        target: {
+          ...target,
+          ...(currentHealth !== undefined ? { health: currentHealth } : {}),
+        },
+        rawDamage: event.damage,
+      });
+
+      target.health = result.remainingHealth;
+      this.entityHealth.set(target.id, result.remainingHealth);
+      this.entityStatuses.set(target.id, result.status);
+      this.renderer.updateEntityStatus(target.id, result.status, target.side);
+
+      const damageEvent: DamageEvent = {
+        type: 'damage',
+        timestamp: event.timestamp,
+        sourceEntityId: event.sourceEntityId,
+        targetEntityId: target.id,
+        detail: `${target.name} 受到 ${result.damage} 点伤害，剩余生命值 ${result.remainingHealth}`,
+        damage: result.damage,
+        remainingHealth: result.remainingHealth,
+      };
+      this.onEventTrigger?.(damageEvent);
+
+      if (result.status === 'destroyed') {
+        const destroyedEvent: EntityDestroyedEvent = {
+          type: 'destruction',
+          timestamp: event.timestamp,
+          sourceEntityId: event.sourceEntityId,
+          targetEntityId: target.id,
+          detail: `${target.name} 被摧毁`,
+          damage: result.damage,
+        };
+        this.onEventTrigger?.(destroyedEvent);
+      }
+      return;
+    }
+  }
+
   /**
    * 动画主循环 — 用累计虚拟时间驱动，倍速直接影响时间推进速度
    */
@@ -600,6 +920,16 @@ export class ExecutionEngine {
 
     // 更新实体位置
     this.updateEntitiesToTime(this.virtualElapsedMs);
+
+    const previousVirtualMs = Math.max(0, this.virtualElapsedMs - realDeltaMs * this.speed);
+    const weaponEvaluation = this.weaponSystem.evaluatePhase({
+      scenario: this.scenario!,
+      phase,
+      previousTimeMs: previousVirtualMs,
+      currentTimeMs: this.virtualElapsedMs,
+      getEntityPositionAtTime: (entityId) => this.findEntityPositionAtTime(entityId, this.virtualElapsedMs),
+      runtimeConfig: this.scenario?.visualEffects?.weaponRuntime,
+    });
 
     // 同步干扰机当前位置，探测逻辑统一通过电子战管理器计算有效探测半径。
     this.entityPositions.forEach((position, entityId) => {
@@ -630,9 +960,6 @@ export class ExecutionEngine {
       if (!this.firedEventsThisPhase.has(eventKey) && this.virtualElapsedMs >= eventMs) {
         this.firedEventsThisPhase.add(eventKey);
         this.onEventTrigger?.(event);
-        if (event.type === 'attack') {
-          this.renderer.triggerStrikeAnimation(event.sourceEntityId, event.targetEntityId ?? '');
-        }
         if (event.type === 'destruction' && event.targetEntityId) {
           this.entityStatuses.set(event.targetEntityId, 'destroyed');
           if (this.scenario) {
@@ -648,6 +975,29 @@ export class ExecutionEngine {
       }
     });
 
+    weaponEvaluation.launches.forEach((event) => {
+      if (this.firedWeaponLaunchesThisPhase.has(event.weaponId)) return;
+      this.firedWeaponLaunchesThisPhase.add(event.weaponId);
+      this.onEventTrigger?.(event as WeaponLaunchEvent);
+    });
+
+    weaponEvaluation.impacts.forEach((event) => {
+      if (this.firedWeaponImpactsThisPhase.has(event.weaponId)) return;
+      this.firedWeaponImpactsThisPhase.add(event.weaponId);
+      this.onEventTrigger?.(event as WeaponImpactEvent);
+      this.applyImpactDamage(event as WeaponImpactEvent);
+      const effectType = this.getImpactEffectType(event.targetEntityId);
+      this.activeExplosions.set(event.weaponId, {
+        id: `explosion-${event.weaponId}`,
+        type: effectType,
+        position: event.hitPosition,
+        startTimeMs: this.getGlobalVirtualTimeMs(),
+        damage: event.damage,
+      });
+    });
+
+    this.syncRuntimeVisuals(weaponEvaluation.weapons);
+
     // 检查阶段是否结束
     if (this.virtualElapsedMs >= phase.duration * 1000) {
       // 阶段结束：将实体快照更新到阶段末位置，作为下一阶段起点
@@ -657,11 +1007,14 @@ export class ExecutionEngine {
         this.currentPhaseIndex++;
         this.virtualElapsedMs = 0;
         this.firedEventsThisPhase.clear();
+        this.firedWeaponLaunchesThisPhase.clear();
+        this.firedWeaponImpactsThisPhase.clear();
         // 为下一阶段建立移动计划（从上阶段末位置出发）
         this.buildPhaseMoves(this.currentPhaseIndex);
         this.onPhaseComplete?.(phase);
       } else {
         this.status = 'completed';
+        this.syncRuntimeVisuals([]);
         this.onPhaseComplete?.(phase);
         this.notifyStatusChange();
         this.animationFrameId = null;

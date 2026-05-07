@@ -13,6 +13,7 @@ import { TacticalValidator } from '../services/tactical-validator';
 import { WordExporter } from '../services/word-exporter';
 import type { MapRenderer } from '../services/map-renderer';
 import type { ExecutionEngine } from '../services/execution-engine';
+import { normalizeTacticalScenario } from '../services/tactical-scenario-normalizer';
 import { useActionPlanStore } from './action-plan';
 
 const LLM_API_KEY = import.meta.env.VITE_LLM_API_KEY || '';
@@ -290,24 +291,28 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   // --- XML 导入 ---
 
   function loadScenario(scenario: TacticalScenario) {
-    currentScenario.value = scenario;
+    const normalizedScenario = normalizeTacticalScenario(scenario);
+    currentScenario.value = normalizedScenario;
 
     if (executionEngine && mapRenderer) {
-      executionEngine.load(scenario);
-      mapRenderer.renderScenario(scenario);
-      mapRenderer.flyToScenario(scenario);
+      executionEngine.load(normalizedScenario);
+      mapRenderer.renderScenario(normalizedScenario);
+      mapRenderer.flyToScenario(normalizedScenario);
     }
 
     try {
       const actionPlanStore = useActionPlanStore();
-      actionPlanStore.createPlan(scenario, scenario.scenarioMetadata?.name ?? scenario.summary);
+      actionPlanStore.createPlan(
+        normalizedScenario,
+        normalizedScenario.scenarioMetadata?.name ?? normalizedScenario.summary,
+      );
     } catch (err) {
       console.error('Failed to create action plan:', err);
     }
 
     addAssistantMessage(
-      `XML 想定已导入：${scenario.scenarioMetadata?.name ?? scenario.id}`,
-      scenario,
+      `XML 想定已导入：${normalizedScenario.scenarioMetadata?.name ?? normalizedScenario.id}`,
+      normalizedScenario,
     );
   }
 

@@ -7,6 +7,8 @@ import type { Phase, TacticalEvent } from '../../types/tactical-scenario';
 const props = defineProps<{
   open: boolean;
   plan: ActionPlan | null;
+  staticDetectionVisible: boolean;
+  runtimeRadarScanVisible: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -19,6 +21,8 @@ const emit = defineEmits<{
   prevPhase: [];
   nextPhase: [];
   setSpeed: [speed: number];
+  toggleStaticDetection: [visible: boolean];
+  toggleRuntimeRadarScan: [visible: boolean];
 }>();
 
 const speedOptions = [0.5, 1, 2, 5, 10];
@@ -113,7 +117,10 @@ function getEventLabel(event: TacticalEvent): string {
     movement: '机动',
     detection: '探测',
     attack: '打击',
+    damage: '受损',
     destruction: '毁伤',
+    'weapon-launch': '发射',
+    'weapon-impact': '命中',
   };
   return map[event.type] ?? event.type;
 }
@@ -180,6 +187,28 @@ function handlePlayToggle() {
           @click="emit('setSpeed', option)"
         >
           {{ option }}x
+        </button>
+      </div>
+
+      <div class="selector-group debug-toggle-group">
+        <span>雷达调试</span>
+        <button
+          type="button"
+          class="chip-button debug-chip"
+          :class="{ active: staticDetectionVisible }"
+          :disabled="!plan"
+          @click="emit('toggleStaticDetection', !staticDetectionVisible)"
+        >
+          静态范围{{ staticDetectionVisible ? '开' : '关' }}
+        </button>
+        <button
+          type="button"
+          class="chip-button debug-chip"
+          :class="{ active: runtimeRadarScanVisible }"
+          :disabled="!plan"
+          @click="emit('toggleRuntimeRadarScan', !runtimeRadarScanVisible)"
+        >
+          动态扫描{{ runtimeRadarScanVisible ? '开' : '关' }}
         </button>
       </div>
     </div>
@@ -419,6 +448,15 @@ function handlePlayToggle() {
   color: #00d6c9;
   border-color: rgba(0, 214, 201, 0.48);
   background: rgba(0, 214, 201, 0.14);
+}
+
+.debug-toggle-group {
+  padding-left: 10px;
+  border-left: 1px solid rgba(107, 196, 255, 0.16);
+}
+
+.debug-chip {
+  min-width: 86px;
 }
 
 .gantt-wrap {
@@ -693,6 +731,7 @@ function handlePlayToggle() {
 .event-movement { background: #00d6c9; }
 .event-detection { background: #6bc4ff; }
 .event-attack { background: #ff6b6b; }
+.event-damage { background: #ff9f1c; }
 .event-destruction { background: #ff3333; }
 
 .empty-state {

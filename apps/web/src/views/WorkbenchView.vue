@@ -38,6 +38,8 @@ const mapRendererRef = ref<MapRenderer | null>(null);
 const selectedRouteId = ref<string | null>(null);
 const routeDecisions = ref<Map<string, RouteDecision>>(new Map());
 const showSimulationDrawer = ref(false);
+const staticDetectionVisible = ref(true);
+const runtimeRadarScanVisible = ref(false);
 
 // 组件卸载时清理
 onUnmounted(() => {
@@ -112,6 +114,21 @@ function handleSimulationNextPhase() {
 function handleSimulationSetSpeed(speed: number) {
   executionEngineRef.value?.setSpeed(speed);
   syncExecutionStateFromEngine();
+}
+
+function handleToggleStaticDetection(visible: boolean) {
+  staticDetectionVisible.value = visible;
+  mapRendererRef.value?.setRuntimeVisualDebugOptions({
+    staticDetectionVisible: visible,
+  });
+}
+
+function handleToggleRuntimeRadarScan(visible: boolean) {
+  runtimeRadarScanVisible.value = visible;
+  mapRendererRef.value?.setRuntimeVisualDebugOptions({
+    runtimeRadarScanVisible: visible,
+  });
+  executionEngineRef.value?.setRuntimeEmitterDebugVisible(visible);
 }
 
 // 部署配置弹窗状态
@@ -315,6 +332,8 @@ const scenarioEntities = computed(() => {
     <SimulationDrawer
       :open="showSimulationDrawer"
       :plan="actionPlanStore.activePlan"
+      :static-detection-visible="staticDetectionVisible"
+      :runtime-radar-scan-visible="runtimeRadarScanVisible"
       @close="showSimulationDrawer = false"
       @play="handleSimulationPlay"
       @pause="handleSimulationPause"
@@ -324,6 +343,8 @@ const scenarioEntities = computed(() => {
       @prev-phase="handleSimulationPrevPhase"
       @next-phase="handleSimulationNextPhase"
       @set-speed="handleSimulationSetSpeed"
+      @toggle-static-detection="handleToggleStaticDetection"
+      @toggle-runtime-radar-scan="handleToggleRuntimeRadarScan"
     />
 
     <!-- 部署配置弹窗 -->

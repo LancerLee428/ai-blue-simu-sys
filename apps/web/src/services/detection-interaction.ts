@@ -74,7 +74,8 @@ export class DetectionInteraction {
           const entityPos = entityPositions.get(entity.id);
           if (!entityPos) continue;
 
-          const distance = this.calculateDistance(zone.center, entityPos);
+          const detectorPos = detectorEntity.position;
+          const distance = this.calculateDistance(detectorPos, entityPos);
 
           // 应用电子战干扰效果
           let effectiveRadius = zone.radiusMeters;

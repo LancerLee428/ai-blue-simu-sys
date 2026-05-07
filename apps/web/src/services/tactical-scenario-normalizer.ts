@@ -14,13 +14,18 @@ import type {
   InstructionSeqConfig,
   Phase,
   PlatformType,
+  RadarTrackingConfig,
   StateMachineConfig,
   StrikeTask,
   TacticalEvent,
   TacticalScenario,
   TaskConfig,
+  VisualEffectsConfig,
+  WeaponEffectConfig,
+  ExplosionEffectConfig,
 } from '../types/tactical-scenario';
 import { PLATFORM_META } from '../types/tactical-scenario';
+import { normalizeRadarTrackingConfig } from './runtime-visual-math';
 
 type LooseRecord = Record<string, any>;
 
@@ -48,6 +53,53 @@ function normalizePosition(position: Partial<GeoPosition> | undefined): GeoPosit
     ...(position?.heading !== undefined ? { heading: Number(position.heading) } : {}),
     ...(position?.orbit ? { orbit: position.orbit } : {}),
   };
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return asArray(value)
+    .map(item => String(item ?? '').trim())
+    .filter(Boolean);
+}
+
+function isAirTarget(entity: EntitySpec | undefined): boolean {
+  return entity ? PLATFORM_META[entity.type]?.operatingDomain === 'air' : false;
+}
+
+function isNavalTarget(entity: EntitySpec | undefined): boolean {
+  return entity ? PLATFORM_META[entity.type]?.category === 'naval' : false;
+}
+
+function inferWeaponForAttack(attacker: EntitySpec, target: EntitySpec | undefined): string {
+  if (attacker.type === 'ground-sam') return 'hq-9';
+  if (attacker.type === 'ship-destroyer' || attacker.type === 'ship-frigate') {
+    return isAirTarget(target) ? 'sm-6' : 'yj-18';
+  }
+  if (attacker.type === 'ship-submarine') return 'yj-18';
+  if (attacker.type === 'uav-strike') return isNavalTarget(target) ? 'harpoon' : 'agm-154';
+  if (attacker.type === 'air-bomber') return 'storm-shadow';
+  if (attacker.type === 'air-fighter' || attacker.type === 'air-multirole') {
+    return isAirTarget(target) ? 'aim-120d' : isNavalTarget(target) ? 'harpoon' : 'agm-88';
+  }
+  return 'aim-120d';
+}
+
+function inferSensorForEntity(entity: EntitySpec): string | null {
+  if (entity.type.includes('radar') || entity.type === 'air-aew') return 'radar';
+  if (entity.type === 'ship-submarine') return 'sonar';
+  if (entity.type === 'air-jammer' || entity.type === 'ground-ew') return 'ew-suite';
+  if (PLATFORM_META[entity.type]?.category === 'air' || PLATFORM_META[entity.type]?.category === 'naval') {
+    return 'radar';
+  }
+  return null;
+}
+
+function normalizeLoadout(entity: LooseRecord): EntitySpec['loadout'] | undefined {
+  const raw = entity.loadout as LooseRecord | undefined;
+  const weapons = normalizeStringArray(raw?.weapons ?? entity.weapons);
+  const sensors = normalizeStringArray(raw?.sensors ?? entity.sensors);
+
+  if (weapons.length === 0 && sensors.length === 0) return undefined;
+  return { weapons, sensors };
 }
 
 function normalizeParam(param: LooseRecord): ComponentParam {
@@ -192,6 +244,162 @@ function normalizeEnvironment(environment: LooseRecord | undefined): Environment
   };
 }
 
+function getWeaponEffectDefaults(weaponId: string): WeaponEffectConfig {
+  if (weaponId === 'harpoon' || weaponId === 'yj-18') {
+    return {
+      weaponId,
+      trailEnabled: true,
+      trailColor: '#ff9a1f',
+      trailWidth: 4,
+      iconStyle: 'anti-ship',
+    };
+  }
+  if (weaponId === 'agm-154') {
+    return {
+      weaponId,
+      trailEnabled: true,
+      trailColor: '#ffd27a',
+      trailWidth: 3,
+      iconStyle: 'bomb',
+    };
+  }
+  if (weaponId === 'rocket') {
+    return {
+      weaponId,
+      trailEnabled: true,
+      trailColor: '#ff6b35',
+      trailWidth: 3,
+      iconStyle: 'rocket',
+    };
+  }
+  return {
+    weaponId,
+    trailEnabled: true,
+    trailColor: '#ffd24a',
+    trailWidth: 3,
+    iconStyle: 'missile',
+  };
+}
+
+function normalizeWeaponEffect(effect: LooseRecord): WeaponEffectConfig | null {
+  const weaponId = String(effect.weaponId ?? effect.id ?? '').trim();
+  if (!weaponId) return null;
+  const defaults = getWeaponEffectDefaults(weaponId);
+  return {
+    weaponId,
+    trailEnabled: effect.trailEnabled !== false,
+    trailColor: String(effect.trailColor ?? defaults.trailColor),
+    trailWidth: Number(effect.trailWidth ?? defaults.trailWidth),
+    iconStyle: effect.iconStyle === 'anti-ship' || effect.iconStyle === 'bomb' || effect.iconStyle === 'rocket'
+      ? effect.iconStyle
+      : defaults.iconStyle,
+  };
+}
+
+function normalizeExplosionEffect(effect: LooseRecord): ExplosionEffectConfig | null {
+  const type = String(effect.type ?? '').trim();
+  if (type !== 'missile-impact' && type !== 'ship-impact' && type !== 'ground-impact') return null;
+  const defaults = getExplosionEffectDefaults(type);
+  return {
+    type,
+    radius: Number(effect.radius ?? defaults.radius),
+    durationMs: Number(effect.durationMs ?? defaults.durationMs),
+    innerColor: String(effect.innerColor ?? defaults.innerColor),
+    outerColor: String(effect.outerColor ?? defaults.outerColor),
+  };
+}
+
+function getExplosionEffectDefaults(type: ExplosionEffectConfig['type']): ExplosionEffectConfig {
+  if (type === 'ship-impact') {
+    return { type, radius: 96, durationMs: 1400, innerColor: '#ffe3a1', outerColor: '#ff3b30' };
+  }
+  if (type === 'ground-impact') {
+    return { type, radius: 84, durationMs: 1200, innerColor: '#ffd27a', outerColor: '#ff6b35' };
+  }
+  return { type, radius: 72, durationMs: 1000, innerColor: '#ffd27a', outerColor: '#ff5500' };
+}
+
+function inferExplosionTypes(scenario: TacticalScenario): ExplosionEffectConfig['type'][] {
+  const types = new Set<ExplosionEffectConfig['type']>(['missile-impact']);
+  for (const task of scenario.strikeTasks) {
+    const target = findEntity(scenario, task.targetEntityId);
+    if (target && PLATFORM_META[target.type]?.category === 'naval') {
+      types.add('ship-impact');
+    } else if (target && PLATFORM_META[target.type]?.operatingDomain === 'ground') {
+      types.add('ground-impact');
+    }
+  }
+  return Array.from(types);
+}
+
+function normalizeVisualEffects(input: unknown, scenario: TacticalScenario): VisualEffectsConfig {
+  const raw = (input ?? {}) as LooseRecord;
+  const weaponIds = new Set<string>();
+  for (const entity of getAllEntities(scenario)) {
+    for (const weaponId of entity.loadout?.weapons ?? []) {
+      weaponIds.add(weaponId);
+    }
+  }
+
+  const explicitWeaponEffects = asArray<LooseRecord>(raw.weaponEffects?.items ?? raw.weaponEffects)
+    .map(normalizeWeaponEffect)
+    .filter((effect): effect is WeaponEffectConfig => effect !== null);
+  for (const effect of explicitWeaponEffects) {
+    weaponIds.delete(effect.weaponId);
+  }
+
+  const explicitExplosionEffects = asArray<LooseRecord>(raw.explosionEffects?.items ?? raw.explosionEffects)
+    .map(normalizeExplosionEffect)
+    .filter((effect): effect is ExplosionEffectConfig => effect !== null);
+  const explicitExplosionTypes = new Set(explicitExplosionEffects.map(effect => effect.type));
+
+  return {
+    enabled: raw.enabled !== false,
+    weaponEffects: {
+      enabled: raw.weaponEffects?.enabled !== false,
+      items: [
+        ...explicitWeaponEffects,
+        ...Array.from(weaponIds).map(getWeaponEffectDefaults),
+      ],
+    },
+    explosionEffects: {
+      enabled: raw.explosionEffects?.enabled !== false,
+      items: [
+        ...explicitExplosionEffects,
+        ...inferExplosionTypes(scenario)
+          .filter(type => !explicitExplosionTypes.has(type))
+          .map(getExplosionEffectDefaults),
+      ],
+    },
+    sensorEffects: {
+      enabled: raw.sensorEffects?.enabled !== false,
+      radarScanEnabled: raw.sensorEffects?.radarScanEnabled !== false,
+      scanSpeedDegPerSec: Number(raw.sensorEffects?.scanSpeedDegPerSec ?? 60),
+      beamWidthDeg: Number(raw.sensorEffects?.beamWidthDeg ?? 18),
+      ...(raw.sensorEffects?.color ? { color: String(raw.sensorEffects.color) } : {}),
+    },
+    electronicWarfareEffects: {
+      enabled: raw.electronicWarfareEffects?.enabled !== false,
+      pulseEnabled: raw.electronicWarfareEffects?.pulseEnabled !== false,
+      pulseColor: String(raw.electronicWarfareEffects?.pulseColor ?? '#ff9f1c'),
+      pulseDurationMs: Number(raw.electronicWarfareEffects?.pulseDurationMs ?? 2_200),
+    },
+    weaponRuntime: {
+      timeScaleForDemo: Number(raw.weaponRuntime?.timeScaleForDemo ?? 0.08),
+      forceImpactWithinPhase: raw.weaponRuntime?.forceImpactWithinPhase !== false,
+    },
+    performance: {
+      mode: raw.performance?.mode === 'low' || raw.performance?.mode === 'medium' || raw.performance?.mode === 'high'
+        ? raw.performance.mode
+        : 'medium',
+      maxActiveExplosions: Number(raw.performance?.maxActiveExplosions ?? 10),
+      maxActiveScans: Number(raw.performance?.maxActiveScans ?? 8),
+      maxActivePulses: Number(raw.performance?.maxActivePulses ?? 4),
+      maxActiveTrails: Number(raw.performance?.maxActiveTrails ?? 20),
+    },
+  };
+}
+
 function normalizeCommunication(comm: LooseRecord, index: number): CommunicationLink | null {
   const senderRef = comm.sender?.equipRef ?? comm.from ?? comm.source ?? comm.sender;
   const receiverRef = comm.receiver?.equipRef ?? comm.to ?? comm.target ?? comm.receiver;
@@ -259,12 +467,18 @@ function normalizeDetectionZones(scenario: TacticalScenario): DetectionZone[] {
     const side = isSide(zone.side) ? zone.side : entity?.side;
     if (!entity || !side) return null;
 
+    const trackingInput = (zone as LooseRecord).tracking;
+    const tracking = trackingInput === undefined
+      ? undefined
+      : normalizeRadarTrackingConfig(trackingInput as RadarTrackingConfig);
+
     return {
       entityId: entity.id,
       side,
       center: normalizePosition(zone.center ?? entity.position),
       radiusMeters: Number(zone.radiusMeters ?? zone.radius ?? 0),
       ...(zone.label ? { label: String(zone.label) } : {}),
+      ...(tracking ? { tracking } : {}),
     };
   }).filter((zone): zone is DetectionZone => zone !== null && zone.radiusMeters > 0);
 }
@@ -276,6 +490,8 @@ function normalizePhases(scenario: TacticalScenario): Phase[] {
       timestamp: Number(event.timestamp ?? 0),
       sourceEntityId: String(event.sourceEntityId ?? ''),
       ...(event.targetEntityId ? { targetEntityId: String(event.targetEntityId) } : {}),
+      ...(event.weaponId ? { weaponId: String(event.weaponId) } : {}),
+      ...(event.weaponType ? { weaponType: String(event.weaponType) } : {}),
       detail: String(event.detail ?? ''),
     } as TacticalEvent)).filter(event => event.sourceEntityId);
 
@@ -349,6 +565,33 @@ function addAttackEventsFromStrikeTasks(scenario: TacticalScenario): void {
   }
 }
 
+function ensureAttackLoadouts(scenario: TacticalScenario): void {
+  const entities = getAllEntities(scenario);
+
+  for (const entity of entities) {
+    const sensor = inferSensorForEntity(entity);
+    if (!sensor) continue;
+    entity.loadout = {
+      weapons: entity.loadout?.weapons ?? [],
+      sensors: entity.loadout?.sensors?.length ? entity.loadout.sensors : [sensor],
+    };
+  }
+
+  for (const task of scenario.strikeTasks) {
+    const attacker = findEntity(scenario, task.attackerEntityId);
+    const target = findEntity(scenario, task.targetEntityId);
+    if (!attacker) continue;
+
+    const existingWeapons = attacker.loadout?.weapons ?? [];
+    if (existingWeapons.length > 0) continue;
+
+    attacker.loadout = {
+      weapons: [inferWeaponForAttack(attacker, target)],
+      sensors: attacker.loadout?.sensors ?? [],
+    };
+  }
+}
+
 export function normalizeTacticalScenario(input: TacticalScenario): TacticalScenario {
   const scenario = clone(input);
 
@@ -364,6 +607,7 @@ export function normalizeTacticalScenario(input: TacticalScenario): TacticalScen
         type: isPlatformType(entity.type) ? entity.type : 'facility-target',
         side: isSide(entity.side) ? entity.side : side,
         position: normalizePosition(entity.position),
+        loadout: normalizeLoadout(entity),
         components: asArray(entity.components),
       })),
     };
@@ -394,12 +638,14 @@ export function normalizeTacticalScenario(input: TacticalScenario): TacticalScen
 
   scenario.strikeTasks = inferStrikeTasksFromRoutes(scenario);
   addAttackEventsFromStrikeTasks(scenario);
+  ensureAttackLoadouts(scenario);
 
   scenario.tasks = asArray<LooseRecord>(scenario.tasks)
     .map(normalizeTask)
     .filter((task): task is TaskConfig => task !== null);
   scenario.environment = normalizeEnvironment(scenario.environment as LooseRecord | undefined);
   scenario.interactions = normalizeInteractions(scenario.interactions as LooseRecord | undefined);
+  scenario.visualEffects = normalizeVisualEffects((scenario as LooseRecord).visualEffects, scenario);
 
   if (!scenario.metadata) {
     scenario.metadata = {

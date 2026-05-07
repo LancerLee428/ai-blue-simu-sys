@@ -36,9 +36,14 @@ import type {
   EntityStateInPhase,
   EntityStatus,
   TacticalEventType,
+  VisualEffectsConfig,
+  WeaponEffectConfig,
+  ExplosionEffectConfig,
+  RadarTrackingConfig,
 } from '../types/tactical-scenario';
 import type { PlatformType, ForceSide } from '../types/tactical-scenario';
 import { keplerianToGeodetic } from './orbit-calculator';
+import { normalizeRadarTrackingConfig } from './runtime-visual-math';
 
 function getText(el: Element | null | undefined, selector: string): string {
   return el?.querySelector(selector)?.textContent?.trim() ?? '';
@@ -126,6 +131,21 @@ function parseComponents(equipEl: Element): EquipmentComponent[] {
   });
 }
 
+function parseLoadout(equipEl: Element): EntitySpec['loadout'] | undefined {
+  const loadoutEl = equipEl.querySelector(':scope > Loadout');
+  if (!loadoutEl) return undefined;
+
+  const weapons = Array.from(loadoutEl.querySelectorAll(':scope > Weapons > Weapon'))
+    .map(weaponEl => getAttrText(weaponEl, 'id') || weaponEl.textContent?.trim() || '')
+    .filter(Boolean);
+  const sensors = Array.from(loadoutEl.querySelectorAll(':scope > Sensors > Sensor'))
+    .map(sensorEl => getAttrText(sensorEl, 'id') || sensorEl.textContent?.trim() || '')
+    .filter(Boolean);
+
+  if (weapons.length === 0 && sensors.length === 0) return undefined;
+  return { weapons, sensors };
+}
+
 function parsePosition(equipEl: Element): GeoPosition {
   const moverEl = equipEl.querySelector(
     'Component[id*="mover"], Components > Component'
@@ -178,11 +198,29 @@ function parsePosition(equipEl: Element): GeoPosition {
   return { longitude: 0, latitude: 0, altitude: 0 };
 }
 
-function mapModelIdToPlatformType(modelId: string | undefined): PlatformType {
-  if (!modelId) return 'facility-command';
-  const id = modelId.toLowerCase();
-  if (id.includes('sat') || id.includes('recon') || id.includes('dut')) return 'uav-recon';
-  if (id.includes('ground') || id.includes('station')) return 'facility-radar';
+function inferPlatformType(equipmentName: string, components: EquipmentComponent[], modelId: string | undefined): PlatformType {
+  const haystack = [
+    modelId,
+    equipmentName,
+    ...components.flatMap(component => [component.name, component.type]),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (/(航母|carrier|出云|山东舰)/i.test(haystack)) return 'ship-carrier';
+  if (/(驱逐舰|destroyer|055|摩耶)/i.test(haystack)) return 'ship-destroyer';
+  if (/(潜艇|submarine|093|underwater)/i.test(haystack)) return 'ship-submarine';
+  if (/(歼-16d|jammer|电子战)/i.test(haystack)) return 'air-jammer';
+  if (/(预警机|aew|e-2c)/i.test(haystack)) return 'air-aew';
+  if (/(无人机|uav|攻击-11)/i.test(haystack)) return 'uav-strike';
+  if (/(战斗机|fighter|歼-16|f-15)/i.test(haystack)) return 'air-fighter';
+  if (/(坦克|tank|99a)/i.test(haystack)) return 'ground-tank';
+  if (/(自行火炮|spg|plz)/i.test(haystack)) return 'ground-spg';
+  if (/(防空|sam|爱国者|hq-9|红旗)/i.test(haystack)) return 'ground-sam';
+  if (/(雷达|radar|tpy)/i.test(haystack)) return 'ground-radar';
+  if (/(sat|recon|dut)/i.test(haystack)) return 'uav-recon';
+  if (/(ground|station)/i.test(haystack)) return 'facility-radar';
   return 'facility-command';
 }
 
@@ -193,17 +231,20 @@ function parseEquipments(doc: Document, tag: 'Participating' | 'Supporting'): En
 
   return Array.from(container.querySelectorAll(':scope > Equipment')).map(eq => {
     const modelId = getText(eq, 'ModelId') || undefined;
+    const name = getText(eq, 'Name');
+    const components = parseComponents(eq);
     const entity: EntitySpec = {
       id: eq.getAttribute('id') ?? `equip-${Date.now()}`,
-      name: getText(eq, 'Name'),
-      type: mapModelIdToPlatformType(modelId),
+      name,
+      type: inferPlatformType(name, components, modelId),
       side,
       position: parsePosition(eq),
       modelId,
       modelType: getText(eq, 'ModelType') || undefined,
       interfaceProtocol: getText(eq, 'InterfaceProtocol') || undefined,
       federateName: getText(eq, 'FederateName') || undefined,
-      components: parseComponents(eq),
+      components,
+      loadout: parseLoadout(eq),
       taskRef: eq.querySelector('TaskRef')?.getAttribute('taskId') ?? undefined,
     };
     return entity;
@@ -432,6 +473,77 @@ function parseEnvironment(doc: Document): EnvironmentConfig | undefined {
   };
 }
 
+function parseVisualEffects(doc: Document): VisualEffectsConfig | undefined {
+  const effectsEl = doc.querySelector('VisualEffects');
+  if (!effectsEl) return undefined;
+
+  const weaponEffectsEl = effectsEl.querySelector(':scope > WeaponEffects');
+  const explosionEffectsEl = effectsEl.querySelector(':scope > ExplosionEffects');
+  const sensorEffectsEl = effectsEl.querySelector(':scope > SensorEffects');
+  const ewEffectsEl = effectsEl.querySelector(':scope > ElectronicWarfareEffects');
+  const weaponRuntimeEl = effectsEl.querySelector(':scope > WeaponRuntime');
+  const performanceEl = effectsEl.querySelector(':scope > Performance');
+  const performanceMode = getAttrText(performanceEl, 'mode');
+
+  const weaponItems: WeaponEffectConfig[] = Array.from(
+    effectsEl.querySelectorAll(':scope > WeaponEffects > WeaponEffect')
+  ).map(effectEl => ({
+    weaponId: getAttrText(effectEl, 'weaponId') || getAttrText(effectEl, 'id'),
+    trailEnabled: getAttrText(effectEl, 'trailEnabled') !== 'false',
+    trailColor: getAttrText(effectEl, 'trailColor') || '#ffd24a',
+    trailWidth: getAttrFloat(effectEl, 'trailWidth') || 3,
+    iconStyle: (getAttrText(effectEl, 'iconStyle') || 'missile') as WeaponEffectConfig['iconStyle'],
+  })).filter(effect => effect.weaponId);
+
+  const explosionItems: ExplosionEffectConfig[] = Array.from(
+    effectsEl.querySelectorAll(':scope > ExplosionEffects > ExplosionEffect')
+  ).map(effectEl => ({
+    type: (getAttrText(effectEl, 'type') || 'missile-impact') as ExplosionEffectConfig['type'],
+    radius: getAttrFloat(effectEl, 'radius') || 72,
+    durationMs: getAttrFloat(effectEl, 'durationMs') || 1000,
+    innerColor: getAttrText(effectEl, 'innerColor') || '#ffd27a',
+    outerColor: getAttrText(effectEl, 'outerColor') || '#ff5500',
+  }));
+
+  return {
+    enabled: getAttrText(effectsEl, 'enabled') !== 'false',
+    weaponEffects: {
+      enabled: getAttrText(weaponEffectsEl, 'enabled') !== 'false',
+      items: weaponItems,
+    },
+    explosionEffects: {
+      enabled: getAttrText(explosionEffectsEl, 'enabled') !== 'false',
+      items: explosionItems,
+    },
+    sensorEffects: {
+      enabled: getAttrText(sensorEffectsEl, 'enabled') !== 'false',
+      radarScanEnabled: getAttrText(sensorEffectsEl, 'radarScanEnabled') !== 'false',
+      scanSpeedDegPerSec: getAttrFloat(sensorEffectsEl, 'scanSpeedDegPerSec') || 60,
+      beamWidthDeg: getAttrFloat(sensorEffectsEl, 'beamWidthDeg') || 18,
+      ...(getAttrText(sensorEffectsEl, 'color') ? { color: getAttrText(sensorEffectsEl, 'color') } : {}),
+    },
+    electronicWarfareEffects: {
+      enabled: getAttrText(ewEffectsEl, 'enabled') !== 'false',
+      pulseEnabled: getAttrText(ewEffectsEl, 'pulseEnabled') !== 'false',
+      pulseColor: getAttrText(ewEffectsEl, 'pulseColor') || '#ff9f1c',
+      pulseDurationMs: getAttrFloat(ewEffectsEl, 'pulseDurationMs') || 2200,
+    },
+    weaponRuntime: {
+      timeScaleForDemo: getAttrFloat(weaponRuntimeEl, 'timeScaleForDemo') || 0.08,
+      forceImpactWithinPhase: getAttrText(weaponRuntimeEl, 'forceImpactWithinPhase') !== 'false',
+    },
+    performance: {
+      mode: performanceMode === 'high' || performanceMode === 'medium' || performanceMode === 'low'
+        ? performanceMode
+        : 'medium',
+      maxActiveExplosions: getAttrFloat(performanceEl, 'maxActiveExplosions') || 10,
+      maxActiveScans: getAttrFloat(performanceEl, 'maxActiveScans') || 8,
+      maxActivePulses: getAttrFloat(performanceEl, 'maxActivePulses') || 4,
+      maxActiveTrails: getAttrFloat(performanceEl, 'maxActiveTrails') || 20,
+    },
+  };
+}
+
 function parseInteractions(doc: Document): InteractionConfig | undefined {
   const intEl = doc.querySelector('Interactions');
   if (!intEl) return undefined;
@@ -506,7 +618,12 @@ function isEntityStatus(value: string | null | undefined): value is EntityStatus
 }
 
 function isTacticalEventType(value: string | null | undefined): value is TacticalEventType {
-  return value === 'movement' || value === 'detection' || value === 'attack' || value === 'destruction';
+  return value === 'movement'
+    || value === 'detection'
+    || value === 'attack'
+    || value === 'destruction'
+    || value === 'weapon-launch'
+    || value === 'weapon-impact';
 }
 
 function getAllEntities(forces: TacticalScenario['forces']): EntitySpec[] {
@@ -601,15 +718,48 @@ function parseDetectionZones(doc: Document, forces: TacticalScenario['forces']):
       if (!side || !center || radiusMeters <= 0) return null;
 
       const label = getAttrText(zoneEl, 'label') || getText(zoneEl, 'Label');
+      const tracking = parseDetectionZoneTracking(zoneEl);
       return {
         entityId,
         side,
         center,
         radiusMeters,
         ...(label ? { label } : {}),
+        ...(tracking ? { tracking } : {}),
       };
     })
     .filter((zone): zone is DetectionZone => zone !== null);
+}
+
+export function parseDetectionZoneTrackingAttributes(attributes: {
+  enabled?: string;
+  targetTypes?: string;
+  maxTracks?: number;
+}): RadarTrackingConfig | undefined {
+  if (
+    attributes.enabled === undefined
+    && attributes.targetTypes === undefined
+    && attributes.maxTracks === undefined
+  ) {
+    return undefined;
+  }
+
+  return normalizeRadarTrackingConfig({
+    enabled: attributes.enabled !== 'false',
+    targetTypes: attributes.targetTypes,
+    maxTracks: attributes.maxTracks ?? 1,
+  });
+}
+
+function parseDetectionZoneTracking(zoneEl: Element): RadarTrackingConfig | undefined {
+  const trackingEl = zoneEl.querySelector(':scope > Tracking');
+  if (!trackingEl) return undefined;
+
+  return parseDetectionZoneTrackingAttributes({
+    enabled: getAttrText(trackingEl, 'enabled'),
+    targetTypes: getAttrText(trackingEl, 'targetTypes'),
+    maxTracks: getAttrFloat(trackingEl, 'maxTracks') || 1,
+  });
 }
 
 function parseStrikeTasks(doc: Document, forces: TacticalScenario['forces']): StrikeTask[] {
@@ -648,11 +798,15 @@ function parsePhases(doc: Document, forces: TacticalScenario['forces']): Phase[]
           if (!sourceEntityId || !findEntity(forces, sourceEntityId)) return null;
 
           const targetEntityId = getAttrText(eventEl, 'targetEntityId') || undefined;
+          const weaponId = getAttrText(eventEl, 'weaponId') || undefined;
+          const weaponType = getAttrText(eventEl, 'weaponType') || undefined;
           return {
             type,
             timestamp: getAttrFloat(eventEl, 'timestamp'),
             sourceEntityId,
             ...(targetEntityId ? { targetEntityId } : {}),
+            ...(weaponId ? { weaponId } : {}),
+            ...(weaponType ? { weaponType } : {}),
             detail: getAttrText(eventEl, 'detail') || getText(eventEl, 'Detail') || '',
           };
         })
@@ -859,6 +1013,7 @@ export class XmlScenarioParser {
 
     const tasks = parseTasks(doc);
     const environment = parseEnvironment(doc);
+    const visualEffects = parseVisualEffects(doc);
     const interactions = parseInteractions(doc);
     const routes = parseRoutes(doc, forces);
     const explicitDetectionZones = parseDetectionZones(doc, forces);
@@ -893,6 +1048,7 @@ export class XmlScenarioParser {
       tasks: tasks.length > 0 ? tasks : undefined,
       environment,
       interactions,
+      visualEffects,
     };
   }
 }

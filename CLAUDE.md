@@ -105,11 +105,28 @@ Cesium 地图渲染引擎，负责将战术场景可视化。
 - 渲染路线（虚线 + 箭头）
 - 渲染探测区域（半透明圆形）
 - AI 决策可视化（路线风险分析）
+- 运行态特效：武器飞行轨迹、雷达扫描波束、电子干扰波束、爆炸粒子效果
 
 **关键方法**:
 - `renderScenario(scenario)`: 渲染完整场景
 - `updateEntityPosition(entityId, position)`: 更新实体位置
+- `updateRuntimeVisuals(update)`: 更新运行态视觉（武器、爆炸、雷达等）
+- `setRuntimeVisualDebugOptions(options)`: 设置调试可见性开关
 - `setOnRouteClick(callback)`: 设置路线点击回调
+
+#### WeaponSystem (`apps/web/src/services/weapon-system.ts`)
+武器系统，负责计算武器发射、飞行和命中事件。
+
+**关键设计**:
+- `estimateImpactTimeMs()` 使用实体**初始位置**计算命中时间，确保 `impactTimeMs` 是固定值，不随实体移动而变化。若改为当前位置，`impactTimeMs` 每帧变化速度会超过 `currentTimeMs` 增长速度，导致命中条件 `previousTimeMs < impactTimeMs` 永远不成立，爆炸无法触发。
+- `evaluatePhase()` 里武器飞行轨迹插值仍使用当前位置（动态），与命中时间计算分离。
+
+#### ExplosionRenderer (`apps/web/src/services/explosion-renderer.ts`)
+爆炸粒子效果渲染器，使用 Cesium `ParticleSystem`。
+
+**关键依赖**:
+- Cesium `ParticleSystem` 依赖 `viewer.clock` tick 来推进粒子时间。时钟不 tick，粒子不发射。
+- 必须在 `useCesium.ts` 里设置 `clock.shouldAnimate = true`、`clock.canAnimate = true`、`clock.clockRange = UNBOUNDED`，并在 `scene.preRender` 里强制保持时钟运行（防止 Cesium 内部逻辑停止时钟）。
 
 #### 状态管理 (Pinia Stores)
 

@@ -21,20 +21,27 @@ import { getEntity3DModelCanvas } from './entity-3d-models';
 import { PLATFORM_META } from '../types/tactical-scenario';
 import { generateOrbitTrack } from './orbit-calculator';
 import { AiDecisionVisualizer, type RouteDecision } from './ai-decision-visualizer';
-import { ExplosionRenderer } from './explosion-renderer';
+import { ExplosionRenderer, resolveExplosionEffectConfig } from './explosion-renderer';
 import {
+  createElectronicSuppressionBeamLayers,
+  createRadarBeamEdgeIndices,
   createRadarBeamMesh,
   createRadarScanEmitterModel,
   getCesiumClockRangeForTacticalSector,
   getStaleRuntimeEmitterIds,
+  prepareRuntimeExplosionsForRender,
   resolveStaticDetectionVisible,
   shouldRenderRuntimeRadarBaseVolume,
+  shouldRenderRuntimeEmitterBeam,
+  shouldRenderRuntimeExplosions,
   shouldRenderRuntimeRadarScan,
 } from './runtime-visual-math';
 
 export interface RuntimeVisualDebugOptions {
   staticDetectionVisible: boolean | null;
   runtimeRadarScanVisible: boolean | null;
+  runtimeJammingVisible: boolean | null;
+  runtimeExplosionVisible: boolean | null;
 }
 
 /**
@@ -54,9 +61,13 @@ export class MapRenderer {
   private visualEffects: VisualEffectsConfig | null = null;
   private explosionRenderer: ExplosionRenderer;
   private lastRuntimeVisualUpdate: RuntimeVisualUpdate | null = null;
+  private debugExplosionFallbackPosition: GeoPosition | null = null;
+  private debugExplosionFrameId: number | null = null;
   private debugOptions: RuntimeVisualDebugOptions = {
     staticDetectionVisible: null,
     runtimeRadarScanVisible: null,
+    runtimeJammingVisible: null,
+    runtimeExplosionVisible: null,
   };
 
   constructor(viewer: Cesium.Viewer) {
@@ -80,18 +91,30 @@ export class MapRenderer {
     // 清除旧实体，避免 "already exists" 错误
     this.clearRuntimeVisuals();
     this.explosionRenderer.reset();
+    this.cancelDebugExplosionLoop();
     this.viewer.entities.removeAll();
     this.entityIdSet.clear();
     this.routeDecisions.clear();
     this.weaponIds.clear();
     this.staticDetectionIds.clear();
     this.visualEffects = scenario.visualEffects ?? null;
+    this.debugExplosionFallbackPosition = this.getScenarioDebugExplosionPosition(scenario);
 
     this.renderEntities(scenario);
     this.renderRoutes(scenario);
     this.renderDetectionZones(scenario.detectionZones);
     this.renderStrikeTasks(scenario);
     this.renderOrbitTracks(scenario);
+    this.lastRuntimeVisualUpdate = {
+      virtualTimeMs: 0,
+      executionStatus: 'idle',
+      entities: new Map(),
+      weapons: [],
+      sensorEmitters: [],
+      ewEmitters: [],
+      explosions: [],
+    };
+    this.updateRuntimeVisuals(this.lastRuntimeVisualUpdate);
   }
 
   /**
@@ -186,8 +209,10 @@ export class MapRenderer {
     this.weaponIds.clear();
     this.clearRuntimeVisuals();
     this.explosionRenderer.reset();
+    this.cancelDebugExplosionLoop();
     this.visualEffects = null;
     this.staticDetectionIds.clear();
+    this.debugExplosionFallbackPosition = null;
   }
 
   updateRuntimeVisuals(update: RuntimeVisualUpdate): void {
@@ -201,8 +226,22 @@ export class MapRenderer {
       [...update.sensorEmitters, ...update.ewEmitters],
       update.virtualTimeMs,
       shouldRenderRuntimeRadarScan(update.executionStatus, this.debugOptions.runtimeRadarScanVisible),
+      this.debugOptions.runtimeJammingVisible ?? update.executionStatus === 'running',
     );
-    this.renderRuntimeExplosions(update.explosions, update.virtualTimeMs);
+    if (shouldRenderRuntimeExplosions(
+      update.executionStatus,
+      this.debugOptions.runtimeExplosionVisible,
+      update.explosions.length > 0,
+    )) {
+      this.renderRuntimeExplosions(prepareRuntimeExplosionsForRender({
+        explosions: update.explosions,
+        debugVisible: this.debugOptions.runtimeExplosionVisible,
+        virtualTimeMs: update.virtualTimeMs,
+        fallbackPosition: this.debugExplosionFallbackPosition,
+      }), update.virtualTimeMs);
+    } else {
+      this.explosionRenderer.reset();
+    }
     this.viewer.scene.requestRender();
   }
 
@@ -212,16 +251,25 @@ export class MapRenderer {
       ...options,
     };
 
-    if (this.lastRuntimeVisualUpdate) {
-      this.updateRuntimeVisuals(this.lastRuntimeVisualUpdate);
-      return;
-    }
-
     if (options.staticDetectionVisible !== undefined) {
       this.setStaticDetectionVisible(options.staticDetectionVisible ?? true);
     }
     if (options.runtimeRadarScanVisible === false) {
       this.removeRuntimeRadarScans();
+    }
+    if (options.runtimeJammingVisible === false) {
+      this.removeRuntimeEWEmitters();
+    }
+    if (options.runtimeExplosionVisible === false) {
+      this.cancelDebugExplosionLoop();
+      this.explosionRenderer.reset();
+    } else if (options.runtimeExplosionVisible === true) {
+      this.startDebugExplosionLoop();
+    }
+
+    if (this.lastRuntimeVisualUpdate) {
+      this.updateRuntimeVisuals(this.lastRuntimeVisualUpdate);
+      return;
     }
     this.viewer.scene.requestRender();
   }
@@ -452,21 +500,28 @@ export class MapRenderer {
     weapons.forEach((weapon) => this.weaponIds.add(weapon.id));
   }
 
-  private renderRuntimeEmitters(emitters: EmitterVolume[], virtualTimeMs: number, renderRadarScan: boolean): void {
+  private renderRuntimeEmitters(
+    emitters: EmitterVolume[],
+    virtualTimeMs: number,
+    renderRadarScan: boolean,
+    renderEW: boolean,
+  ): void {
     const activeIds = new Set<string>();
     const maxScans = this.visualEffects?.performance?.maxActiveScans ?? 8;
     const maxPulses = this.visualEffects?.performance?.maxActivePulses ?? 4;
-    let scanCount = 0;
+    let radarScanCount = 0;
     let pulseCount = 0;
 
     emitters.forEach((emitter) => {
       if (!emitter.active || this.visualEffects?.enabled === false) return;
       if (emitter.kind === 'radar' && this.visualEffects?.sensorEffects?.enabled === false) return;
+      if (emitter.kind === 'electronic-jamming' && !renderEW) return;
       if (emitter.kind === 'electronic-jamming' && this.visualEffects?.electronicWarfareEffects?.enabled === false) return;
 
       const baseId = `emitter-${emitter.id}`;
+      const isJammingTrack = emitter.kind === 'electronic-jamming' && emitter.mode === 'track';
       const radarScanEnabled = this.visualEffects?.sensorEffects?.radarScanEnabled !== false;
-      if (shouldRenderRuntimeRadarBaseVolume({ kind: emitter.kind, radarScanEnabled })) {
+      if (!isJammingTrack && shouldRenderRuntimeRadarBaseVolume({ kind: emitter.kind, radarScanEnabled })) {
         activeIds.add(baseId);
         this.upsertEmitterVolume(baseId, emitter, {
           rangeMeters: emitter.rangeMeters,
@@ -475,16 +530,35 @@ export class MapRenderer {
         });
       }
 
-      if (emitter.kind === 'radar' && radarScanEnabled && renderRadarScan && scanCount < maxScans) {
+      if (isJammingTrack && shouldRenderRuntimeEmitterBeam({
+        emitter,
+        renderRadarScan,
+        radarScanCount,
+        maxRadarScans: maxScans,
+      })) {
+        createElectronicSuppressionBeamLayers({
+          virtualTimeMs,
+          pulseCycleMs: emitter.pulseCycleMs,
+        }).forEach(layer => activeIds.add(`${baseId}-${layer.idSuffix}`));
+        this.upsertElectronicSuppressionBeam(baseId, emitter, virtualTimeMs);
+      }
+
+      if (emitter.kind === 'radar' && radarScanEnabled && shouldRenderRuntimeEmitterBeam({
+        emitter,
+        renderRadarScan,
+        radarScanCount,
+        maxRadarScans: maxScans,
+      })) {
         const scanEmitter = this.createRadarScanEmitter(emitter, virtualTimeMs);
         const scanId = `${baseId}-scan`;
         activeIds.add(scanId);
         this.upsertRadarScanBeam(scanId, scanEmitter);
-        scanCount += 1;
+        radarScanCount += 1;
       }
 
       if (
         emitter.kind === 'electronic-jamming'
+        && emitter.mode !== 'track'
         && this.visualEffects?.electronicWarfareEffects?.pulseEnabled !== false
         && pulseCount < maxPulses
       ) {
@@ -515,6 +589,15 @@ export class MapRenderer {
       });
   }
 
+  private removeRuntimeEWEmitters(): void {
+    Array.from(this.emitterIds)
+      .filter(id => id.includes('ew-'))
+      .forEach((id) => {
+        this.removeRuntimeEmitterById(id);
+        this.emitterIds.delete(id);
+      });
+  }
+
   private removeRuntimeEmitterById(id: string): void {
     const primitive = this.radarScanPrimitives.get(id);
     if (primitive) {
@@ -524,13 +607,20 @@ export class MapRenderer {
     this.viewer.entities.removeById(id);
   }
 
-  private upsertRadarScanBeam(id: string, emitter: EmitterVolume): void {
+  private replaceRuntimePrimitive(id: string, primitive: Cesium.Primitive): void {
     const existing = this.radarScanPrimitives.get(id);
     if (existing) {
       this.viewer.scene.primitives.remove(existing);
       this.radarScanPrimitives.delete(id);
     }
 
+    (primitive as any).__tacticalLayer = true;
+    this.viewer.scene.primitives.add(primitive);
+    this.radarScanPrimitives.set(id, primitive);
+    this.emitterIds.add(id);
+  }
+
+  private upsertRadarScanBeam(id: string, emitter: EmitterVolume): void {
     const color = this.getEmitterColor(emitter);
     const position = Cesium.Cartesian3.fromDegrees(
       emitter.position.longitude,
@@ -578,10 +668,87 @@ export class MapRenderer {
       allowPicking: false,
     });
 
-    (primitive as any).__tacticalLayer = true;
-    this.viewer.scene.primitives.add(primitive);
-    this.radarScanPrimitives.set(id, primitive);
-    this.emitterIds.add(id);
+    this.replaceRuntimePrimitive(id, primitive);
+  }
+
+  private upsertElectronicSuppressionBeam(id: string, emitter: EmitterVolume, virtualTimeMs: number): void {
+    const activeLayerIds = new Set<string>();
+    const baseColor = this.getEmitterColor(emitter);
+    const position = Cesium.Cartesian3.fromDegrees(
+      emitter.position.longitude,
+      emitter.position.latitude,
+      Math.max(0, emitter.position.altitude ?? 0),
+    );
+    const elevationCenter = (emitter.elevationMinDeg + emitter.elevationMaxDeg) / 2;
+    const elevationWidth = Math.max(1, emitter.elevationMaxDeg - emitter.elevationMinDeg);
+
+    createElectronicSuppressionBeamLayers({
+      virtualTimeMs,
+      pulseCycleMs: emitter.pulseCycleMs,
+    }).forEach((layer) => {
+      const layerId = `${id}-${layer.idSuffix}`;
+      activeLayerIds.add(layerId);
+
+      const layerElevationWidth = elevationWidth * layer.elevationWidthScale;
+      const mesh = createRadarBeamMesh({
+        rangeMeters: emitter.rangeMeters * layer.rangeScale,
+        azimuthWidthDeg: emitter.azimuthWidthDeg * layer.azimuthWidthScale,
+        elevationMinDeg: elevationCenter + layer.elevationOffsetDeg - layerElevationWidth / 2,
+        elevationMaxDeg: elevationCenter + layer.elevationOffsetDeg + layerElevationWidth / 2,
+        segments: layer.drawEdges ? 36 : 28,
+      });
+      const attributes = new Cesium.GeometryAttributes();
+      attributes.position = new Cesium.GeometryAttribute({
+        componentDatatype: Cesium.ComponentDatatype.DOUBLE,
+        componentsPerAttribute: 3,
+        values: new Float64Array(mesh.positions),
+      });
+      const indices = layer.drawEdges
+        ? createRadarBeamEdgeIndices({
+            perimeterStart: mesh.perimeterStart,
+            perimeterCount: mesh.perimeterCount,
+          })
+        : mesh.indices;
+      const geometry = new Cesium.Geometry({
+        attributes,
+        indices: indices.length > 65_535
+          ? new Uint32Array(indices)
+          : new Uint16Array(indices),
+        primitiveType: layer.drawEdges ? Cesium.PrimitiveType.LINES : Cesium.PrimitiveType.TRIANGLES,
+        boundingSphere: Cesium.BoundingSphere.fromVertices(mesh.positions),
+      });
+      const modelMatrix = this.getRadarBeamModelMatrix(
+        position,
+        emitter.headingDeg + emitter.azimuthCenterDeg + layer.azimuthOffsetDeg,
+      );
+      const primitive = new Cesium.Primitive({
+        geometryInstances: new Cesium.GeometryInstance({
+          geometry,
+          modelMatrix,
+          id: layerId,
+          attributes: {
+            color: Cesium.ColorGeometryInstanceAttribute.fromColor(baseColor.withAlpha(layer.alpha)),
+          },
+        }),
+        appearance: new Cesium.PerInstanceColorAppearance({
+          flat: true,
+          faceForward: true,
+          translucent: true,
+          closed: false,
+        }),
+        asynchronous: false,
+        allowPicking: false,
+      });
+
+      this.replaceRuntimePrimitive(layerId, primitive);
+    });
+
+    Array.from(this.emitterIds)
+      .filter(emitterId => emitterId.startsWith(`${id}-`) && !activeLayerIds.has(emitterId))
+      .forEach((staleId) => {
+        this.removeRuntimeEmitterById(staleId);
+        this.emitterIds.delete(staleId);
+      });
   }
 
   private getRadarBeamModelMatrix(position: Cesium.Cartesian3, headingDeg: number): Cesium.Matrix4 {
@@ -681,14 +848,65 @@ export class MapRenderer {
     );
   }
 
+  private startDebugExplosionLoop(): void {
+    if (this.debugExplosionFrameId !== null) return;
+    const startedAt = performance.now();
+    if (!this.lastRuntimeVisualUpdate) {
+      this.lastRuntimeVisualUpdate = {
+        virtualTimeMs: 0,
+        executionStatus: 'idle',
+        entities: new Map(),
+        weapons: [],
+        sensorEmitters: [],
+        ewEmitters: [],
+        explosions: [],
+      };
+    }
+
+    const tick = () => {
+      if (this.debugOptions.runtimeExplosionVisible !== true) {
+        this.debugExplosionFrameId = null;
+        return;
+      }
+
+      if (this.lastRuntimeVisualUpdate) {
+        this.updateRuntimeVisuals({
+          ...this.lastRuntimeVisualUpdate,
+          virtualTimeMs: startedAt + (performance.now() - startedAt),
+        });
+      }
+
+      this.debugExplosionFrameId = requestAnimationFrame(tick);
+    };
+
+    this.debugExplosionFrameId = requestAnimationFrame(tick);
+  }
+
+  private cancelDebugExplosionLoop(): void {
+    if (this.debugExplosionFrameId === null) return;
+    cancelAnimationFrame(this.debugExplosionFrameId);
+    this.debugExplosionFrameId = null;
+  }
+
   private getExplosionEffect(type: ExplosionEffectType) {
-    const configured = this.visualEffects?.explosionEffects.items.find(effect => effect.type === type);
-    if (configured && this.visualEffects?.explosionEffects.enabled !== false) return configured;
-    return type === 'ship-impact'
-      ? { type, radius: 96, durationMs: 1400, innerColor: '#ffe3a1', outerColor: '#ff3b30' }
-      : type === 'ground-impact'
-        ? { type, radius: 84, durationMs: 1200, innerColor: '#ffd27a', outerColor: '#ff6b35' }
-        : { type, radius: 72, durationMs: 1000, innerColor: '#ffd27a', outerColor: '#ff5500' };
+    return resolveExplosionEffectConfig(type, this.visualEffects);
+  }
+
+  private getScenarioDebugExplosionPosition(scenario: TacticalScenario): GeoPosition | null {
+    const targetEntityId = scenario.strikeTasks[0]?.targetEntityId;
+    const targetEntity = targetEntityId
+      ? scenario.forces.flatMap(force => force.entities).find(entity => entity.id === targetEntityId)
+      : null;
+    const fallbackEntity = targetEntity ?? scenario.forces.flatMap(force => force.entities)[0];
+
+    if (!fallbackEntity) return null;
+
+    return {
+      longitude: fallbackEntity.position.longitude,
+      latitude: fallbackEntity.position.latitude,
+      altitude: fallbackEntity.position.altitude > 100 ? fallbackEntity.position.altitude : 0,
+      heading: fallbackEntity.position.heading,
+    };
   }
 
   private setStaticDetectionVisible(visible: boolean): void {
@@ -710,12 +928,10 @@ export class MapRenderer {
   private renderStrikeTasks(scenario: TacticalScenario): void {
     scenario.strikeTasks.forEach((task) => {
       let targetPosition: GeoPosition | null = null;
-      let targetSide: 'red' | 'blue' = 'blue';
       for (const force of scenario.forces) {
         const found = force.entities.find((e) => e.id === task.targetEntityId);
         if (found) {
           targetPosition = found.position;
-          targetSide = force.side;  // 目标方（用于爆炸颜色）
           break;
         }
       }
@@ -754,7 +970,6 @@ export class MapRenderer {
       });
       (entity as any).__tacticalLayer = true;
       (entity as any).__strikeTask = task;
-      (entity as any).__targetSide = targetSide;
     });
   }
 
@@ -862,116 +1077,6 @@ export class MapRenderer {
       (cesiumEntity.billboard as any).width = shapeCanvas.width;
       (cesiumEntity.billboard as any).height = shapeCanvas.height;
     }
-  }
-
-  /**
-   * 触发打击爆炸动画
-   * 通过 source+target ID 匹配打击任务实体，在目标位置渲染爆炸
-   */
-  triggerStrikeAnimation(sourceEntityId: string, targetEntityId: string): void {
-    // 遇历所有 strike-* 实体，找到 targetEntityId 匹配的那个
-    let strikeEntity: Cesium.Entity | undefined;
-    this.viewer.entities.values.forEach((e) => {
-      if (!strikeEntity && e.id?.startsWith('strike-')) {
-        const task = (e as any).__strikeTask;
-        if (task && task.targetEntityId === targetEntityId) {
-          strikeEntity = e;
-        }
-      }
-    });
-    if (!strikeEntity) return;
-
-    const position = (strikeEntity as any).position?.getValue
-      ? (strikeEntity as any).position.getValue(this.viewer.clock.currentTime)
-      : null;
-    if (!position) return;
-
-    const targetSide: ForceSide = (strikeEntity as any).__targetSide ?? 'blue';
-    this.renderStrikeExplosion(position, targetSide);
-  }
-
-  /**
-   * 爆炸动画实现
-   * 用 postRender 逐帧更新：
-   *   - 内圈（橙色）：快速膨胀 0→40px，持续 0.6s
-   *   - 外圈（红色/黄色）：慢速膨胀 0→70px，持续 1.0s
-   *   - 两圈同时淡出
-   */
-  renderStrikeExplosion(position: Cesium.Cartesian3, targetSide: ForceSide): void {
-    const startTime = Date.now();
-    const INNER_DURATION = 600;  // ms
-    const OUTER_DURATION = 1000; // ms
-    const MAX_INNER = 40;
-    const MAX_OUTER = 72;
-
-    // 用 Billboard 渲染爆炸帧（无 Primitive，兼容性更好）
-    const innerCanvas = document.createElement('canvas');
-    innerCanvas.width = MAX_OUTER * 2;
-    innerCanvas.height = MAX_OUTER * 2;
-
-    const innerBill = this.viewer.entities.add({
-      position,
-      billboard: {
-        image: innerCanvas.toDataURL(),
-        width: MAX_OUTER * 2,
-        height: MAX_OUTER * 2,
-        heightReference: Cesium.HeightReference.NONE,
-        verticalOrigin: Cesium.VerticalOrigin.CENTER,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-    });
-    (innerBill as any).__tacticalLayer = true;
-
-    const handler = () => {
-      const elapsed = Date.now() - startTime;
-      const ctx = innerCanvas.getContext('2d')!;
-      const cx = MAX_OUTER;
-      const cy = MAX_OUTER;
-
-      ctx.clearRect(0, 0, innerCanvas.width, innerCanvas.height);
-
-      // ── 外圈（红色/蓝色，依据目标方） ─────────────────
-      if (elapsed < OUTER_DURATION) {
-        const t2 = elapsed / OUTER_DURATION;
-        const r2 = MAX_OUTER * t2;
-        const a2 = Math.max(0, 1 - t2);
-        const outerColor = targetSide === 'blue' ? `rgba(255,80,0,${a2 * 0.6})` : `rgba(0,150,255,${a2 * 0.6})`;
-        const outerStroke = targetSide === 'blue' ? `rgba(255,200,0,${a2})` : `rgba(80,200,255,${a2})`;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r2, 0, Math.PI * 2);
-        ctx.fillStyle = outerColor;
-        ctx.fill();
-        ctx.strokeStyle = outerStroke;
-        ctx.lineWidth = 3;
-        ctx.stroke();
-      }
-
-      // ── 内圈（白→橙，高亮核心） ──────────────────────
-      if (elapsed < INNER_DURATION) {
-        const t1 = elapsed / INNER_DURATION;
-        const r1 = MAX_INNER * t1;
-        const a1 = Math.max(0, 1 - t1 * 1.5);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r1, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,180,${a1 * 0.9})`;
-        ctx.fill();
-        ctx.strokeStyle = `rgba(255,120,0,${a1})`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-
-      // 更新 billboard 图像
-      if (innerBill.billboard) {
-        (innerBill.billboard as any).image = innerCanvas.toDataURL();
-      }
-
-      if (elapsed >= OUTER_DURATION) {
-        this.viewer.scene.postRender.removeEventListener(handler);
-        this.viewer.entities.remove(innerBill);
-      }
-    };
-
-    this.viewer.scene.postRender.addEventListener(handler);
   }
 
   /**

@@ -25,7 +25,10 @@ import type {
   ExplosionEffectConfig,
 } from '../types/tactical-scenario';
 import { PLATFORM_META } from '../types/tactical-scenario';
-import { normalizeRadarTrackingConfig } from './runtime-visual-math';
+import {
+  normalizeElectronicWarfareConfig,
+  normalizeRadarTrackingConfig,
+} from './runtime-visual-math';
 
 type LooseRecord = Record<string, any>;
 
@@ -378,12 +381,7 @@ function normalizeVisualEffects(input: unknown, scenario: TacticalScenario): Vis
       beamWidthDeg: Number(raw.sensorEffects?.beamWidthDeg ?? 18),
       ...(raw.sensorEffects?.color ? { color: String(raw.sensorEffects.color) } : {}),
     },
-    electronicWarfareEffects: {
-      enabled: raw.electronicWarfareEffects?.enabled !== false,
-      pulseEnabled: raw.electronicWarfareEffects?.pulseEnabled !== false,
-      pulseColor: String(raw.electronicWarfareEffects?.pulseColor ?? '#ff9f1c'),
-      pulseDurationMs: Number(raw.electronicWarfareEffects?.pulseDurationMs ?? 2_200),
-    },
+    electronicWarfareEffects: normalizeElectronicWarfareConfig(raw.electronicWarfareEffects),
     weaponRuntime: {
       timeScaleForDemo: Number(raw.weaponRuntime?.timeScaleForDemo ?? 0.08),
       forceImpactWithinPhase: raw.weaponRuntime?.forceImpactWithinPhase !== false,

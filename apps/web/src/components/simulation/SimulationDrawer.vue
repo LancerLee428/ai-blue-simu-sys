@@ -8,7 +8,9 @@ const props = defineProps<{
   open: boolean;
   plan: ActionPlan | null;
   staticDetectionVisible: boolean;
-  runtimeRadarScanVisible: boolean;
+  runtimeRadarScanVisible: boolean | null;
+  runtimeJammingVisible: boolean | null;
+  runtimeExplosionVisible: boolean | null;
 }>();
 
 const emit = defineEmits<{
@@ -23,6 +25,8 @@ const emit = defineEmits<{
   setSpeed: [speed: number];
   toggleStaticDetection: [visible: boolean];
   toggleRuntimeRadarScan: [visible: boolean];
+  toggleRuntimeJamming: [visible: boolean];
+  toggleRuntimeExplosion: [visible: boolean];
 }>();
 
 const speedOptions = [0.5, 1, 2, 5, 10];
@@ -110,6 +114,12 @@ function getStatusLabel(status: string | undefined): string {
     completed: '已完成',
   };
   return map[status ?? 'idle'] ?? status ?? '待命';
+}
+
+function getDebugToggleLabel(value: boolean | null): string {
+  if (value === true) return '开';
+  if (value === false) return '关';
+  return '自动';
 }
 
 function getEventLabel(event: TacticalEvent): string {
@@ -208,7 +218,25 @@ function handlePlayToggle() {
           :disabled="!plan"
           @click="emit('toggleRuntimeRadarScan', !runtimeRadarScanVisible)"
         >
-          动态扫描{{ runtimeRadarScanVisible ? '开' : '关' }}
+          动态扫描{{ getDebugToggleLabel(runtimeRadarScanVisible) }}
+        </button>
+        <button
+          type="button"
+          class="chip-button debug-chip"
+          :class="{ active: runtimeJammingVisible }"
+          :disabled="!plan"
+          @click="emit('toggleRuntimeJamming', !runtimeJammingVisible)"
+        >
+          干扰效果{{ getDebugToggleLabel(runtimeJammingVisible) }}
+        </button>
+        <button
+          type="button"
+          class="chip-button debug-chip"
+          :class="{ active: runtimeExplosionVisible }"
+          :disabled="!plan"
+          @click="emit('toggleRuntimeExplosion', !runtimeExplosionVisible)"
+        >
+          爆炸效果{{ getDebugToggleLabel(runtimeExplosionVisible) }}
         </button>
       </div>
     </div>

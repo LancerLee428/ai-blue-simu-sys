@@ -238,6 +238,11 @@ export interface SensorEffectsConfig {
 
 export type RadarTrackingTargetType = 'enemy-aircraft' | 'enemy-missile';
 
+export type ElectronicWarfareTrackingTargetType =
+  | 'enemy-aircraft'
+  | 'enemy-missile'
+  | 'enemy-radar';
+
 export interface RadarTrackingConfig {
   enabled: boolean;
   targetTypes: RadarTrackingTargetType[];
@@ -246,6 +251,10 @@ export interface RadarTrackingConfig {
 
 export interface ElectronicWarfareEffectsConfig {
   enabled: boolean;
+  areaEnabled: boolean;
+  trackingEnabled: boolean;
+  trackingTargetTypes: ElectronicWarfareTrackingTargetType[];
+  maxTracks: number;
   pulseEnabled: boolean;
   pulseColor: string;
   pulseDurationMs: number;
@@ -299,6 +308,7 @@ export interface ExplosionRuntimeState {
   type: ExplosionEffectType;
   position: GeoPosition;
   startTimeMs: number;
+  triggeredAtMs?: number;
   damage: number;
 }
 

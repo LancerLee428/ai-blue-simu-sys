@@ -39,11 +39,15 @@ import type {
   VisualEffectsConfig,
   WeaponEffectConfig,
   ExplosionEffectConfig,
+  ElectronicWarfareEffectsConfig,
   RadarTrackingConfig,
 } from '../types/tactical-scenario';
 import type { PlatformType, ForceSide } from '../types/tactical-scenario';
 import { keplerianToGeodetic } from './orbit-calculator';
-import { normalizeRadarTrackingConfig } from './runtime-visual-math';
+import {
+  normalizeElectronicWarfareConfig,
+  normalizeRadarTrackingConfig,
+} from './runtime-visual-math';
 
 function getText(el: Element | null | undefined, selector: string): string {
   return el?.querySelector(selector)?.textContent?.trim() ?? '';
@@ -522,12 +526,16 @@ function parseVisualEffects(doc: Document): VisualEffectsConfig | undefined {
       beamWidthDeg: getAttrFloat(sensorEffectsEl, 'beamWidthDeg') || 18,
       ...(getAttrText(sensorEffectsEl, 'color') ? { color: getAttrText(sensorEffectsEl, 'color') } : {}),
     },
-    electronicWarfareEffects: {
-      enabled: getAttrText(ewEffectsEl, 'enabled') !== 'false',
-      pulseEnabled: getAttrText(ewEffectsEl, 'pulseEnabled') !== 'false',
-      pulseColor: getAttrText(ewEffectsEl, 'pulseColor') || '#ff9f1c',
+    electronicWarfareEffects: parseElectronicWarfareEffectAttributes({
+      enabled: getAttrText(ewEffectsEl, 'enabled'),
+      areaEnabled: getAttrText(ewEffectsEl, 'areaEnabled'),
+      trackingEnabled: getAttrText(ewEffectsEl, 'trackingEnabled'),
+      trackingTargetTypes: getAttrText(ewEffectsEl, 'trackingTargetTypes'),
+      maxTracks: getAttrFloat(ewEffectsEl, 'maxTracks') || 1,
+      pulseEnabled: getAttrText(ewEffectsEl, 'pulseEnabled'),
+      pulseColor: getAttrText(ewEffectsEl, 'pulseColor'),
       pulseDurationMs: getAttrFloat(ewEffectsEl, 'pulseDurationMs') || 2200,
-    },
+    }),
     weaponRuntime: {
       timeScaleForDemo: getAttrFloat(weaponRuntimeEl, 'timeScaleForDemo') || 0.08,
       forceImpactWithinPhase: getAttrText(weaponRuntimeEl, 'forceImpactWithinPhase') !== 'false',
@@ -698,6 +706,28 @@ function parseRoutes(doc: Document, forces: TacticalScenario['forces']): Route[]
       };
     })
     .filter((route): route is Route => route !== null);
+}
+
+export function parseElectronicWarfareEffectAttributes(attributes: {
+  enabled?: string;
+  areaEnabled?: string;
+  trackingEnabled?: string;
+  trackingTargetTypes?: string;
+  maxTracks?: number;
+  pulseEnabled?: string;
+  pulseColor?: string;
+  pulseDurationMs?: number;
+}): ElectronicWarfareEffectsConfig {
+  return normalizeElectronicWarfareConfig({
+    enabled: attributes.enabled !== 'false',
+    areaEnabled: attributes.areaEnabled !== 'false',
+    trackingEnabled: attributes.trackingEnabled !== 'false',
+    trackingTargetTypes: attributes.trackingTargetTypes,
+    maxTracks: attributes.maxTracks ?? 1,
+    pulseEnabled: attributes.pulseEnabled !== 'false',
+    pulseColor: attributes.pulseColor,
+    pulseDurationMs: attributes.pulseDurationMs ?? 2_200,
+  });
 }
 
 function parseDetectionZones(doc: Document, forces: TacticalScenario['forces']): DetectionZone[] {

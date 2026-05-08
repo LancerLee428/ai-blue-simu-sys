@@ -1,8 +1,11 @@
 import type {
+  ElectronicWarfareEffectsConfig,
+  ElectronicWarfareTrackingTargetType,
   EmitterVolume,
   ExecutionStatus,
   ForceSide,
   GeoPosition,
+  ExplosionRuntimeState,
   RadarTrackingConfig,
   RadarTrackingTargetType,
 } from '../types/tactical-scenario';
@@ -42,9 +45,27 @@ export interface RadarTrackingWeaponInput {
   currentPosition: GeoPosition;
 }
 
+export interface ElectronicWarfareTrackingCandidate {
+  id: string;
+  category: ElectronicWarfareTrackingTargetType;
+  position: GeoPosition;
+  distanceMeters: number;
+}
+
 export interface RadarScanEmitterModelOptions {
   virtualTimeMs: number;
   beamWidthDeg: number;
+}
+
+export interface ElectronicSuppressionBeamLayer {
+  idSuffix: 'core' | 'noise-a' | 'noise-b' | 'edge';
+  alpha: number;
+  azimuthWidthScale: number;
+  elevationWidthScale: number;
+  azimuthOffsetDeg: number;
+  elevationOffsetDeg: number;
+  rangeScale: number;
+  drawEdges: boolean;
 }
 
 export function calculateHeadingDeg(from: GeoPosition, to: GeoPosition): number {
@@ -67,6 +88,7 @@ export function calculateElevationDeg(from: GeoPosition, to: GeoPosition): numbe
 }
 
 const DEFAULT_RADAR_TRACKING_TARGET_TYPES: RadarTrackingTargetType[] = ['enemy-aircraft', 'enemy-missile'];
+const DEFAULT_EW_TRACKING_TARGET_TYPES: ElectronicWarfareTrackingTargetType[] = ['enemy-aircraft', 'enemy-missile'];
 
 const RADAR_CAPABLE_ENTITY_TYPES = new Set([
   'air-aew',
@@ -104,6 +126,17 @@ const AIR_TARGET_ENTITY_TYPES = new Set([
   'uav-swarm',
 ]);
 
+const EW_RADAR_TARGET_ENTITY_TYPES = new Set([
+  'air-aew',
+  'air-recon',
+  'uav-recon',
+  'ship-destroyer',
+  'ship-frigate',
+  'ground-sam',
+  'ground-radar',
+  'facility-radar',
+]);
+
 function asArray(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') {
@@ -114,6 +147,10 @@ function asArray(value: unknown): unknown[] {
 
 function isRadarTrackingTargetType(value: unknown): value is RadarTrackingTargetType {
   return value === 'enemy-aircraft' || value === 'enemy-missile';
+}
+
+function isElectronicWarfareTrackingTargetType(value: unknown): value is ElectronicWarfareTrackingTargetType {
+  return value === 'enemy-aircraft' || value === 'enemy-missile' || value === 'enemy-radar';
 }
 
 export function normalizeDegrees(degrees: number): number {
@@ -129,6 +166,27 @@ export function normalizeRadarTrackingConfig(input: unknown): RadarTrackingConfi
     enabled: raw.enabled !== false,
     targetTypes: targetTypes.length > 0 ? targetTypes : [...DEFAULT_RADAR_TRACKING_TARGET_TYPES],
     maxTracks: Math.max(1, Math.floor(Number(raw.maxTracks ?? 1) || 1)),
+  };
+}
+
+export function normalizeElectronicWarfareConfig(input: unknown): ElectronicWarfareEffectsConfig {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const trackingTargetTypes = asArray(raw.trackingTargetTypes)
+    .filter(isElectronicWarfareTrackingTargetType);
+
+  return {
+    enabled: raw.enabled !== false,
+    areaEnabled: raw.areaEnabled !== false,
+    trackingEnabled: raw.trackingEnabled !== false,
+    trackingTargetTypes: trackingTargetTypes.length > 0
+      ? trackingTargetTypes
+      : [...DEFAULT_EW_TRACKING_TARGET_TYPES],
+    maxTracks: Math.max(1, Math.floor(Number(raw.maxTracks ?? 1) || 1)),
+    pulseEnabled: raw.pulseEnabled !== false,
+    pulseColor: typeof raw.pulseColor === 'string' && raw.pulseColor
+      ? raw.pulseColor
+      : '#ff9f1c',
+    pulseDurationMs: Math.max(1, Math.floor(Number(raw.pulseDurationMs ?? 2_200) || 2_200)),
   };
 }
 
@@ -187,6 +245,80 @@ export function selectRadarTrackingTargets(args: {
   return candidates
     .filter(candidate => candidate.distanceMeters <= args.rangeMeters)
     .sort((left, right) => left.distanceMeters - right.distanceMeters)
+    .slice(0, args.tracking.maxTracks);
+}
+
+export function selectElectronicWarfareTargets(args: {
+  jammerSide: ForceSide;
+  jammerPosition: GeoPosition;
+  rangeMeters: number;
+  tracking: ElectronicWarfareEffectsConfig;
+  entities: RadarTrackingEntityInput[];
+  weapons: RadarTrackingWeaponInput[];
+}): ElectronicWarfareTrackingCandidate[] {
+  if (!args.tracking.enabled || !args.tracking.trackingEnabled) return [];
+
+  const targetTypes = new Set(args.tracking.trackingTargetTypes);
+  const candidates: ElectronicWarfareTrackingCandidate[] = [];
+  const trackedEntityIds = new Set<string>();
+
+  if (targetTypes.has('enemy-radar')) {
+    args.entities
+      .filter(entity => entity.side !== args.jammerSide && EW_RADAR_TARGET_ENTITY_TYPES.has(entity.type))
+      .forEach((entity) => {
+        trackedEntityIds.add(entity.id);
+        candidates.push({
+          id: entity.id,
+          category: 'enemy-radar',
+          position: entity.position,
+          distanceMeters: distanceMeters(args.jammerPosition, entity.position),
+        });
+      });
+  }
+
+  if (targetTypes.has('enemy-missile')) {
+    args.weapons
+      .filter(weapon => weapon.launcherSide !== args.jammerSide)
+      .forEach((weapon) => {
+        candidates.push({
+          id: weapon.id,
+          category: 'enemy-missile',
+          position: weapon.currentPosition,
+          distanceMeters: distanceMeters(args.jammerPosition, weapon.currentPosition),
+        });
+      });
+  }
+
+  if (targetTypes.has('enemy-aircraft')) {
+    args.entities
+      .filter(entity => (
+        entity.side !== args.jammerSide
+        && AIR_TARGET_ENTITY_TYPES.has(entity.type)
+        && !trackedEntityIds.has(entity.id)
+      ))
+      .forEach((entity) => {
+        candidates.push({
+          id: entity.id,
+          category: 'enemy-aircraft',
+          position: entity.position,
+          distanceMeters: distanceMeters(args.jammerPosition, entity.position),
+        });
+      });
+  }
+
+  const priority = new Map<ElectronicWarfareTrackingTargetType, number>([
+    ['enemy-radar', 0],
+    ['enemy-missile', 1],
+    ['enemy-aircraft', 2],
+  ]);
+
+  return candidates
+    .filter(candidate => candidate.distanceMeters <= args.rangeMeters)
+    .sort((left, right) => {
+      const priorityDelta = (priority.get(left.category) ?? 99) - (priority.get(right.category) ?? 99);
+      if (priorityDelta !== 0) return priorityDelta;
+      return left.distanceMeters - right.distanceMeters;
+    })
     .slice(0, args.tracking.maxTracks);
 }
 
@@ -266,7 +398,82 @@ export function createRadarBeamMesh(options: RadarBeamMeshOptions): RadarBeamMes
   };
 }
 
+export function createRadarBeamEdgeIndices(args: {
+  perimeterStart: number;
+  perimeterCount: number;
+}): number[] {
+  const indices: number[] = [];
+
+  for (let index = 0; index < args.perimeterCount; index += 1) {
+    const current = args.perimeterStart + index;
+    const next = args.perimeterStart + ((index + 1) % args.perimeterCount);
+    indices.push(0, current, current, next);
+  }
+
+  return indices;
+}
+
+export function createElectronicSuppressionBeamLayers(args: {
+  virtualTimeMs: number;
+  pulseCycleMs: number;
+}): ElectronicSuppressionBeamLayer[] {
+  const cycle = Math.max(1, args.pulseCycleMs);
+  const phase = (args.virtualTimeMs % cycle) / cycle;
+  const waveA = Math.sin(phase * Math.PI * 2);
+  const waveB = Math.cos(phase * Math.PI * 2 + Math.PI / 3);
+
+  return [
+    {
+      idSuffix: 'core',
+      alpha: 0.16,
+      azimuthWidthScale: 1,
+      elevationWidthScale: 1,
+      azimuthOffsetDeg: 0,
+      elevationOffsetDeg: 0,
+      rangeScale: 1,
+      drawEdges: false,
+    },
+    {
+      idSuffix: 'noise-a',
+      alpha: 0.1,
+      azimuthWidthScale: 1.2,
+      elevationWidthScale: 1.32,
+      azimuthOffsetDeg: waveA * 2.6,
+      elevationOffsetDeg: waveB * 1.8,
+      rangeScale: 0.97,
+      drawEdges: false,
+    },
+    {
+      idSuffix: 'noise-b',
+      alpha: 0.07,
+      azimuthWidthScale: 1.42,
+      elevationWidthScale: 1.56,
+      azimuthOffsetDeg: waveB * -3.2,
+      elevationOffsetDeg: waveA * 2.2,
+      rangeScale: 0.92,
+      drawEdges: false,
+    },
+    {
+      idSuffix: 'edge',
+      alpha: 0.22,
+      azimuthWidthScale: 1.08,
+      elevationWidthScale: 1.12,
+      azimuthOffsetDeg: waveA * 0.8,
+      elevationOffsetDeg: waveB * 0.6,
+      rangeScale: 1,
+      drawEdges: true,
+    },
+  ];
+}
+
 export function shouldIncludeRuntimeEmitters(
+  status: ExecutionStatus,
+  debugVisible: boolean | null = null,
+): boolean {
+  return debugVisible ?? status === 'running';
+}
+
+export function shouldIncludeRuntimeEWEmitters(
   status: ExecutionStatus,
   debugVisible: boolean | null = null,
 ): boolean {
@@ -289,6 +496,38 @@ export function shouldRenderRuntimeRadarScan(
   debugVisible: boolean | null = null,
 ): boolean {
   return debugVisible ?? status === 'running';
+}
+
+export function shouldRenderRuntimeExplosions(
+  status: ExecutionStatus,
+  debugVisible: boolean | null = null,
+  hasRuntimeExplosions = false,
+): boolean {
+  if (hasRuntimeExplosions) return status === 'running' || status === 'completed';
+  if (debugVisible !== null) return debugVisible;
+  return debugVisible ?? status === 'running';
+}
+
+export function prepareRuntimeExplosionsForRender(args: {
+  explosions: ExplosionRuntimeState[];
+  debugVisible: boolean | null;
+  virtualTimeMs: number;
+  fallbackPosition: GeoPosition | null;
+  debugCycleMs?: number;
+}): ExplosionRuntimeState[] {
+  if (args.explosions.length > 0) return args.explosions;
+  if (args.debugVisible !== true || !args.fallbackPosition) return [];
+
+  const durationMs = args.debugCycleMs ?? 3_000;
+  const cycleStartMs = Math.max(0, args.virtualTimeMs - (args.virtualTimeMs % durationMs));
+
+  return [{
+    id: `debug-preview-explosion-${cycleStartMs}`,
+    type: 'missile-impact',
+    position: args.fallbackPosition,
+    startTimeMs: cycleStartMs,
+    damage: 1_500,
+  }];
 }
 
 export function createRadarScanEmitterModel(
@@ -322,6 +561,16 @@ export function shouldRenderRuntimeRadarBaseVolume(args: {
   radarScanEnabled: boolean;
 }): boolean {
   return args.kind !== 'radar' || !args.radarScanEnabled;
+}
+
+export function shouldRenderRuntimeEmitterBeam(args: {
+  emitter: Pick<EmitterVolume, 'kind' | 'mode'>;
+  renderRadarScan: boolean;
+  radarScanCount: number;
+  maxRadarScans: number;
+}): boolean {
+  if (args.emitter.kind === 'electronic-jamming' && args.emitter.mode === 'track') return true;
+  return args.renderRadarScan && args.radarScanCount < args.maxRadarScans;
 }
 
 export function isRadarDetectionEmitterSource(args: {

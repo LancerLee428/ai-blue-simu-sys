@@ -30,6 +30,21 @@ export function useCesium() {
     // 禁用光照效果
     viewer.value.scene.globe.enableLighting = false;
 
+    // 让时钟持续运行，粒子系统依赖时钟 tick 来更新粒子
+    viewer.value.clock.shouldAnimate = true;
+    viewer.value.clock.canAnimate = true;
+    viewer.value.clock.multiplier = 1;
+    viewer.value.clock.clockRange = Cesium.ClockRange.UNBOUNDED;
+
+    // 强制每帧推进时钟，防止 Cesium 内部逻辑停止时钟
+    const v = viewer.value;
+    v.scene.preRender.addEventListener(() => {
+      if (!v.clock.shouldAnimate || !v.clock.canAnimate) {
+        v.clock.shouldAnimate = true;
+        v.clock.canAnimate = true;
+      }
+    });
+
     // 飞向台湾
     viewer.value.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(121.0, 23.8, 900000),

@@ -1,20 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDetectionZoneTrackingAttributes } from '../xml-scenario-parser';
-import { getDetectionZoneTrackingAttributes } from '../xml-scenario-exporter';
+import {
+  parseDetectionZoneTrackingAttributes,
+  parseElectronicWarfareEffectAttributes,
+} from '../xml-scenario-parser';
+import {
+  getDetectionZoneTrackingAttributes,
+  getElectronicWarfareEffectAttributes,
+} from '../xml-scenario-exporter';
 
 import {
+  createElectronicSuppressionBeamLayers,
+  createRadarBeamEdgeIndices,
   createRadarScanEmitterModel,
   createRadarBeamMesh,
   getCesiumClockRangeForTacticalSector,
   getScenarioVirtualTimeMs,
   getStaleRuntimeEmitterIds,
   isRadarDetectionEmitterSource,
+  normalizeElectronicWarfareConfig,
   normalizeRadarTrackingConfig,
+  prepareRuntimeExplosionsForRender,
   resolveStaticDetectionVisible,
+  selectElectronicWarfareTargets,
+  shouldRenderRuntimeEmitterBeam,
+  shouldIncludeRuntimeEWEmitters,
   selectRadarTrackingTargets,
   shouldRenderRuntimeRadarBaseVolume,
   shouldIncludeRuntimeEmitters,
+  shouldRenderRuntimeExplosions,
   shouldRenderRuntimeRadarScan,
   shouldShowStaticDetectionVolumesForStatus,
 } from '../runtime-visual-math';
@@ -116,6 +130,40 @@ test('normalizeRadarTrackingConfig should sanitize invalid target types and maxT
   );
 });
 
+test('normalizeElectronicWarfareConfig should default area and tracking settings', () => {
+  assert.deepEqual(
+    normalizeElectronicWarfareConfig(undefined),
+    {
+      enabled: true,
+      areaEnabled: true,
+      trackingEnabled: true,
+      trackingTargetTypes: ['enemy-aircraft', 'enemy-missile'],
+      maxTracks: 1,
+      pulseEnabled: true,
+      pulseColor: '#ff9f1c',
+      pulseDurationMs: 2_200,
+    },
+  );
+});
+
+test('parseElectronicWarfareEffectAttributes should enable tracking for legacy XML without tracking attributes', () => {
+  assert.deepEqual(parseElectronicWarfareEffectAttributes({
+    enabled: 'true',
+    pulseEnabled: 'true',
+    pulseColor: '#ff9f1c',
+    pulseDurationMs: 2200,
+  }), {
+    enabled: true,
+    areaEnabled: true,
+    trackingEnabled: true,
+    trackingTargetTypes: ['enemy-aircraft', 'enemy-missile'],
+    maxTracks: 1,
+    pulseEnabled: true,
+    pulseColor: '#ff9f1c',
+    pulseDurationMs: 2200,
+  });
+});
+
 test('parseDetectionZoneTrackingAttributes should parse Tracking attributes from XML shape', () => {
   assert.deepEqual(parseDetectionZoneTrackingAttributes({
     enabled: 'true',
@@ -125,6 +173,28 @@ test('parseDetectionZoneTrackingAttributes should parse Tracking attributes from
     enabled: true,
     targetTypes: ['enemy-aircraft', 'enemy-missile'],
     maxTracks: 2,
+  });
+});
+
+test('parseElectronicWarfareEffectAttributes should parse EW XML attributes', () => {
+  assert.deepEqual(parseElectronicWarfareEffectAttributes({
+    enabled: 'true',
+    areaEnabled: 'true',
+    trackingEnabled: 'true',
+    trackingTargetTypes: 'enemy-aircraft,enemy-missile,enemy-radar',
+    maxTracks: 2,
+    pulseEnabled: 'true',
+    pulseColor: '#ffaa33',
+    pulseDurationMs: 1800,
+  }), {
+    enabled: true,
+    areaEnabled: true,
+    trackingEnabled: true,
+    trackingTargetTypes: ['enemy-aircraft', 'enemy-missile', 'enemy-radar'],
+    maxTracks: 2,
+    pulseEnabled: true,
+    pulseColor: '#ffaa33',
+    pulseDurationMs: 1800,
   });
 });
 
@@ -145,6 +215,28 @@ test('getDetectionZoneTrackingAttributes should write DetectionZone tracking con
     enabled: 'true',
     targetTypes: 'enemy-aircraft,enemy-missile',
     maxTracks: '2',
+  });
+});
+
+test('getElectronicWarfareEffectAttributes should export EW config to XML attributes', () => {
+  assert.deepEqual(getElectronicWarfareEffectAttributes({
+    enabled: true,
+    areaEnabled: true,
+    trackingEnabled: true,
+    trackingTargetTypes: ['enemy-aircraft', 'enemy-missile', 'enemy-radar'],
+    maxTracks: 2,
+    pulseEnabled: true,
+    pulseColor: '#ffaa33',
+    pulseDurationMs: 1800,
+  }), {
+    enabled: 'true',
+    areaEnabled: 'true',
+    trackingEnabled: 'true',
+    trackingTargetTypes: 'enemy-aircraft,enemy-missile,enemy-radar',
+    maxTracks: '2',
+    pulseEnabled: 'true',
+    pulseColor: '#ffaa33',
+    pulseDurationMs: '1800',
   });
 });
 
@@ -190,6 +282,54 @@ test('selectRadarTrackingTargets should only keep enemy aircraft and enemy missi
   assert.deepEqual(targets.map(target => target.category), ['enemy-missile', 'enemy-aircraft']);
 });
 
+test('selectElectronicWarfareTargets should keep enemy radar, missiles and aircraft inside jammer range', () => {
+  const targets = selectElectronicWarfareTargets({
+    jammerSide: 'blue',
+    jammerPosition: { longitude: 120, latitude: 24, altitude: 9000, heading: 0 },
+    rangeMeters: 220_000,
+    tracking: {
+      enabled: true,
+      areaEnabled: true,
+      trackingEnabled: true,
+      trackingTargetTypes: ['enemy-aircraft', 'enemy-missile', 'enemy-radar'],
+      maxTracks: 3,
+      pulseEnabled: true,
+      pulseColor: '#ff9f1c',
+      pulseDurationMs: 2_200,
+    },
+    entities: [
+      {
+        id: 'red-radar',
+        side: 'red',
+        type: 'ground-radar',
+        position: { longitude: 120.1, latitude: 24, altitude: 0 },
+      },
+      {
+        id: 'red-air',
+        side: 'red',
+        type: 'air-fighter',
+        position: { longitude: 120.4, latitude: 24, altitude: 9000 },
+      },
+      {
+        id: 'blue-air',
+        side: 'blue',
+        type: 'air-fighter',
+        position: { longitude: 120.05, latitude: 24, altitude: 9000 },
+      },
+    ],
+    weapons: [
+      {
+        id: 'red-missile',
+        launcherSide: 'red',
+        currentPosition: { longitude: 120.2, latitude: 24, altitude: 4000 },
+      },
+    ],
+  });
+
+  assert.deepEqual(targets.map(target => target.id), ['red-radar', 'red-missile', 'red-air']);
+  assert.deepEqual(targets.map(target => target.category), ['enemy-radar', 'enemy-missile', 'enemy-aircraft']);
+});
+
 test('createRadarBeamMesh should build a pointed cone beam instead of a spherical slice', () => {
   const mesh = createRadarBeamMesh({
     rangeMeters: 1_000,
@@ -228,6 +368,53 @@ test('createRadarBeamMesh should use a circular far-end cap for tracking beams',
   assert.ok(Math.abs(horizontalRadius - verticalRadius) < 1e-6);
 });
 
+test('createRadarBeamEdgeIndices should build ray and perimeter line pairs', () => {
+  const indices = createRadarBeamEdgeIndices({
+    perimeterStart: 1,
+    perimeterCount: 4,
+  });
+
+  assert.deepEqual(indices, [
+    0, 1,
+    1, 2,
+    0, 2,
+    2, 3,
+    0, 3,
+    3, 4,
+    0, 4,
+    4, 1,
+  ]);
+});
+
+test('createElectronicSuppressionBeamLayers should describe a layered noisy jamming beam', () => {
+  const layers = createElectronicSuppressionBeamLayers({
+    virtualTimeMs: 0,
+    pulseCycleMs: 2_200,
+  });
+
+  assert.deepEqual(layers.map(layer => layer.idSuffix), ['core', 'noise-a', 'noise-b', 'edge']);
+  assert.ok(layers[0].alpha > layers[1].alpha);
+  assert.ok(layers[1].azimuthWidthScale > layers[0].azimuthWidthScale);
+  assert.ok(layers[2].elevationWidthScale > layers[0].elevationWidthScale);
+  assert.equal(layers[3].drawEdges, true);
+});
+
+test('createElectronicSuppressionBeamLayers should shift noise bands with virtual time', () => {
+  const start = createElectronicSuppressionBeamLayers({
+    virtualTimeMs: 0,
+    pulseCycleMs: 2_200,
+  });
+  const later = createElectronicSuppressionBeamLayers({
+    virtualTimeMs: 550,
+    pulseCycleMs: 2_200,
+  });
+
+  assert.notEqual(start[1].azimuthOffsetDeg, later[1].azimuthOffsetDeg);
+  assert.notEqual(start[2].elevationOffsetDeg, later[2].elevationOffsetDeg);
+  assert.equal(start[0].azimuthOffsetDeg, 0);
+  assert.equal(later[0].azimuthOffsetDeg, 0);
+});
+
 test('shouldIncludeRuntimeEmitters should only keep beams during active playback', () => {
   assert.equal(shouldIncludeRuntimeEmitters('running'), true);
   assert.equal(shouldIncludeRuntimeEmitters('completed'), false);
@@ -240,6 +427,21 @@ test('shouldIncludeRuntimeEmitters should allow debug buttons to force emitter r
   assert.equal(shouldIncludeRuntimeEmitters('paused', true), true);
   assert.equal(shouldIncludeRuntimeEmitters('running', false), false);
   assert.equal(shouldIncludeRuntimeEmitters('running', null), true);
+});
+
+test('shouldIncludeRuntimeEWEmitters should let jamming debug visibility work independently', () => {
+  assert.equal(shouldIncludeRuntimeEWEmitters('idle', true), true);
+  assert.equal(shouldIncludeRuntimeEWEmitters('paused', true), true);
+  assert.equal(shouldIncludeRuntimeEWEmitters('running', false), false);
+  assert.equal(shouldIncludeRuntimeEWEmitters('running', null), true);
+});
+
+test('runtime visual debug overrides should default to automatic playback behavior', () => {
+  const unsetDebugOverride = null;
+
+  assert.equal(shouldIncludeRuntimeEmitters('running', unsetDebugOverride), true);
+  assert.equal(shouldIncludeRuntimeEWEmitters('running', unsetDebugOverride), true);
+  assert.equal(shouldRenderRuntimeRadarScan('running', unsetDebugOverride), true);
 });
 
 test('static detection volumes should be controlled by execution status, not emitter presence', () => {
@@ -263,6 +465,73 @@ test('runtime radar scan should allow debug buttons to override execution status
   assert.equal(shouldRenderRuntimeRadarScan('completed', true), true);
   assert.equal(shouldRenderRuntimeRadarScan('running', null), true);
   assert.equal(shouldRenderRuntimeRadarScan('idle', null), false);
+});
+
+test('runtime explosions should allow debug buttons to override execution status', () => {
+  assert.equal(shouldRenderRuntimeExplosions('running', null), true);
+  assert.equal(shouldRenderRuntimeExplosions('idle', null), false);
+  assert.equal(shouldRenderRuntimeExplosions('idle', true), true);
+  assert.equal(shouldRenderRuntimeExplosions('running', false, false), false);
+  assert.equal(shouldRenderRuntimeExplosions('running', false, true), true);
+});
+
+test('runtime explosions should keep rendering active explosions after completion', () => {
+  assert.equal(shouldRenderRuntimeExplosions('completed', null, true), true);
+  assert.equal(shouldRenderRuntimeExplosions('completed', null, false), false);
+  assert.equal(shouldRenderRuntimeExplosions('completed', false, true), true);
+});
+
+test('prepareRuntimeExplosionsForRender should add a debug preview when forced visible without live explosions', () => {
+  const prepared = prepareRuntimeExplosionsForRender({
+    explosions: [],
+    debugVisible: true,
+    virtualTimeMs: 9_500,
+    fallbackPosition: { longitude: 121.5, latitude: 25.2, altitude: 0 },
+  });
+
+  assert.equal(prepared.length, 1);
+  assert.equal(prepared[0].id, 'debug-preview-explosion-9000');
+  assert.equal(prepared[0].startTimeMs, 9_000);
+  assert.deepEqual(prepared[0].position, { longitude: 121.5, latitude: 25.2, altitude: 0 });
+});
+
+test('prepareRuntimeExplosionsForRender should change debug preview id on each preview cycle', () => {
+  const first = prepareRuntimeExplosionsForRender({
+    explosions: [],
+    debugVisible: true,
+    virtualTimeMs: 2_950,
+    fallbackPosition: { longitude: 121.5, latitude: 25.2, altitude: 0 },
+  });
+  const next = prepareRuntimeExplosionsForRender({
+    explosions: [],
+    debugVisible: true,
+    virtualTimeMs: 3_050,
+    fallbackPosition: { longitude: 121.5, latitude: 25.2, altitude: 0 },
+  });
+
+  assert.notEqual(first[0].id, next[0].id);
+  assert.equal(next[0].id, 'debug-preview-explosion-3000');
+});
+
+test('prepareRuntimeExplosionsForRender should prefer live explosions over debug preview', () => {
+  const liveExplosion = {
+    id: 'explosion-live',
+    type: 'ship-impact' as const,
+    position: { longitude: 121, latitude: 25, altitude: 0 },
+    startTimeMs: 8_000,
+    damage: 1200,
+    triggeredAtMs: 42_000,
+  };
+
+  assert.deepEqual(
+    prepareRuntimeExplosionsForRender({
+      explosions: [liveExplosion],
+      debugVisible: true,
+      virtualTimeMs: 9_500,
+      fallbackPosition: { longitude: 121.5, latitude: 25.2, altitude: 0 },
+    }),
+    [liveExplosion],
+  );
 });
 
 test('tracking radar beam model should stay locked on target instead of sweeping over time', () => {
@@ -298,6 +567,47 @@ test('shouldRenderRuntimeRadarBaseVolume should suppress radar base domes when s
   assert.equal(shouldRenderRuntimeRadarBaseVolume({ kind: 'radar', radarScanEnabled: true }), false);
   assert.equal(shouldRenderRuntimeRadarBaseVolume({ kind: 'radar', radarScanEnabled: false }), true);
   assert.equal(shouldRenderRuntimeRadarBaseVolume({ kind: 'electronic-jamming', radarScanEnabled: true }), true);
+});
+
+test('shouldRenderRuntimeEmitterBeam should always keep EW tracking beam available even when radar scan budget is exhausted', () => {
+  assert.equal(
+    shouldRenderRuntimeEmitterBeam({
+      emitter: {
+        kind: 'electronic-jamming',
+        mode: 'track',
+      },
+      renderRadarScan: true,
+      radarScanCount: 8,
+      maxRadarScans: 8,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldRenderRuntimeEmitterBeam({
+      emitter: {
+        kind: 'radar',
+        mode: 'track',
+      },
+      renderRadarScan: true,
+      radarScanCount: 8,
+      maxRadarScans: 8,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRenderRuntimeEmitterBeam({
+      emitter: {
+        kind: 'radar',
+        mode: 'track',
+      },
+      renderRadarScan: true,
+      radarScanCount: 7,
+      maxRadarScans: 8,
+    }),
+    true,
+  );
 });
 
 test('isRadarDetectionEmitterSource should infer radar scanning from entity capability when label is generic', () => {

@@ -122,8 +122,8 @@ export class WeaponSystem {
       return args.attackEvent.timestamp * 1000;
     }
 
-    const launchPosition = args.getEntityPositionAtTime(attacker.id) ?? attacker.position;
-    const targetPosition = args.getEntityPositionAtTime(target.id) ?? target.position;
+    const launchPosition = attacker.position;
+    const targetPosition = target.position;
     const weaponSpec = resolveWeaponSpecForAttack(attacker.loadout?.weapons, args.attackEvent.detail);
     if (!weaponSpec) {
       return args.attackEvent.timestamp * 1000;

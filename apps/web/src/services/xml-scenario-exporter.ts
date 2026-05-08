@@ -20,6 +20,7 @@ import type {
   StrikeTask,
   Phase,
   VisualEffectsConfig,
+  ElectronicWarfareEffectsConfig,
 } from '../types/tactical-scenario';
 import { normalizeTacticalScenario } from './tactical-scenario-normalizer';
 
@@ -471,12 +472,11 @@ function exportVisualEffects(doc: Document, root: Element, visualEffects: Visual
   }
 
   if (visualEffects.electronicWarfareEffects) {
-    effectsEl.appendChild(elAttr(doc, 'ElectronicWarfareEffects', {
-      enabled: String(visualEffects.electronicWarfareEffects.enabled),
-      pulseEnabled: String(visualEffects.electronicWarfareEffects.pulseEnabled),
-      pulseColor: visualEffects.electronicWarfareEffects.pulseColor,
-      pulseDurationMs: String(visualEffects.electronicWarfareEffects.pulseDurationMs),
-    }));
+    effectsEl.appendChild(elAttr(
+      doc,
+      'ElectronicWarfareEffects',
+      getElectronicWarfareEffectAttributes(visualEffects.electronicWarfareEffects),
+    ));
   }
 
   if (visualEffects.weaponRuntime) {
@@ -586,6 +586,21 @@ function exportRoutes(doc: Document, root: Element, routes: Route[]) {
     routesEl.appendChild(routeEl);
   }
   root.appendChild(routesEl);
+}
+
+export function getElectronicWarfareEffectAttributes(
+  config: ElectronicWarfareEffectsConfig,
+): Record<string, string> {
+  return {
+    enabled: String(config.enabled),
+    areaEnabled: String(config.areaEnabled),
+    trackingEnabled: String(config.trackingEnabled),
+    trackingTargetTypes: config.trackingTargetTypes.join(','),
+    maxTracks: String(config.maxTracks),
+    pulseEnabled: String(config.pulseEnabled),
+    pulseColor: config.pulseColor,
+    pulseDurationMs: String(config.pulseDurationMs),
+  };
 }
 
 function exportDetectionZones(doc: Document, root: Element, zones: DetectionZone[]) {

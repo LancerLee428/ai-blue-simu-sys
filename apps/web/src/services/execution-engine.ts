@@ -23,13 +23,16 @@ import { WeatherSystem } from './weather-system';
 import { ElectronicWarfareManager } from './electronic-warfare';
 import { WeaponSystem } from './weapon-system';
 import { DamageCalculator } from './damage-calculator';
+import { getExplosionVisualDurationMs } from './explosion-renderer';
 import {
   calculateElevationDeg,
   calculateHeadingDeg,
   getScenarioVirtualTimeMs,
   isRadarDetectionEmitterSource,
   normalizeRadarTrackingConfig,
+  selectElectronicWarfareTargets,
   selectRadarTrackingTargets,
+  shouldIncludeRuntimeEWEmitters,
   shouldIncludeRuntimeEmitters,
 } from './runtime-visual-math';
 
@@ -113,7 +116,9 @@ export class ExecutionEngine {
   private firedWeaponImpactsThisPhase = new Set<string>();
   private activeExplosions = new Map<string, ExplosionRuntimeState>();
   private lastRuntimeWeapons: Weapon[] = [];
-  private runtimeEmitterDebugVisible: boolean | null = null;
+  private runtimeRadarEmitterDebugVisible: boolean | null = null;
+  private runtimeEWEmitterDebugVisible: boolean | null = null;
+  private postCompletionFrameId: number | null = null;
 
   // 时间控制
   private speed: number = 1;
@@ -162,6 +167,7 @@ export class ExecutionEngine {
         this.ewManager.registerJammer(entity);
       });
     });
+    this.syncElectronicWarfareRanges();
 
     // 初始化实体位置为其原始部署位置
     scenario.forces.forEach((force) => {
@@ -197,6 +203,7 @@ export class ExecutionEngine {
    */
   play(): void {
     if (!this.scenario || this.currentPhaseIndex >= this.scenario.phases.length) return;
+    this.cancelPostCompletionVisualLoop();
 
     if (this.status === 'completed') {
       // 如果已完成，重新开始
@@ -223,6 +230,7 @@ export class ExecutionEngine {
     this.status = 'running';
     // 关键修复：无论从哪个状态开始播放，都重置时间基准
     this.lastRealTime = performance.now();
+
     this.syncRuntimeVisuals(this.lastRuntimeWeapons);
     this.notifyStatusChange();
 
@@ -236,6 +244,7 @@ export class ExecutionEngine {
    */
   pause(): void {
     this.status = 'paused';
+    this.cancelPostCompletionVisualLoop();
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -248,6 +257,7 @@ export class ExecutionEngine {
    * 停止并复位
    */
   stop(): void {
+    this.cancelPostCompletionVisualLoop();
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -390,9 +400,56 @@ export class ExecutionEngine {
   getEWManager() { return this.ewManager; }
   getCollisionDetector() { return this.collisionDetector; }
 
-  setRuntimeEmitterDebugVisible(visible: boolean | null): void {
-    this.runtimeEmitterDebugVisible = visible;
+  setRuntimeRadarEmitterDebugVisible(visible: boolean | null): void {
+    this.runtimeRadarEmitterDebugVisible = visible;
     this.syncRuntimeVisuals(this.lastRuntimeWeapons);
+  }
+
+  setRuntimeEWEmitterDebugVisible(visible: boolean | null): void {
+    this.runtimeEWEmitterDebugVisible = visible;
+    this.syncRuntimeVisuals(this.lastRuntimeWeapons);
+  }
+
+  refreshRuntimeVisuals(): void {
+    this.syncRuntimeVisuals(this.lastRuntimeWeapons);
+  }
+
+  private cancelPostCompletionVisualLoop(): void {
+    if (this.postCompletionFrameId === null) return;
+    cancelAnimationFrame(this.postCompletionFrameId);
+    this.postCompletionFrameId = null;
+  }
+
+  private startPostCompletionVisualLoop(): void {
+    if (this.postCompletionFrameId !== null || this.activeExplosions.size === 0) return;
+
+    const tick = () => {
+      if (this.status !== 'completed' || this.activeExplosions.size === 0) {
+        this.postCompletionFrameId = null;
+        return;
+      }
+
+      this.syncRuntimeVisuals([]);
+      this.pruneCompletedExplosions(performance.now());
+
+      if (this.activeExplosions.size === 0) {
+        this.postCompletionFrameId = null;
+        return;
+      }
+
+      this.postCompletionFrameId = requestAnimationFrame(tick);
+    };
+
+    this.postCompletionFrameId = requestAnimationFrame(tick);
+  }
+
+  private pruneCompletedExplosions(visualTimeMs: number): void {
+    this.activeExplosions.forEach((explosion, id) => {
+      const durationMs = getExplosionVisualDurationMs(explosion.type, this.scenario?.visualEffects);
+      if (explosion.triggeredAtMs !== undefined && visualTimeMs - explosion.triggeredAtMs >= durationMs) {
+        this.activeExplosions.delete(id);
+      }
+    });
   }
 
   private createSensorEmitters(): EmitterVolume[] {
@@ -437,7 +494,7 @@ export class ExecutionEngine {
         }));
 
         if (targetEmitters.length > 0) return targetEmitters;
-        if (this.runtimeEmitterDebugVisible !== true) return [];
+        if (this.runtimeRadarEmitterDebugVisible !== true) return [];
 
         return [{
           id: `radar-${zone.entityId}`,
@@ -498,33 +555,87 @@ export class ExecutionEngine {
     if (!this.scenario) return [];
     const entities = this.scenario.forces.flatMap(force => force.entities);
     const maxPulses = this.scenario.visualEffects?.performance?.maxActivePulses ?? 4;
-    const pulseCycleMs = this.scenario.visualEffects?.electronicWarfareEffects?.pulseDurationMs ?? 2_200;
+    const ewConfig = this.scenario.visualEffects?.electronicWarfareEffects;
+    const pulseCycleMs = ewConfig?.pulseDurationMs ?? 2_200;
 
     return this.ewManager.getActiveJammerZones()
-      .map((zone): EmitterVolume | null => {
+      .flatMap((zone): EmitterVolume[] => {
         const entity = entities.find(item => item.id === zone.entityId);
-        if (!entity) return null;
+        if (!entity || !ewConfig?.enabled) return [];
         const position = this.entityPositions.get(entity.id) ?? zone.position;
+        const emitters: EmitterVolume[] = [];
 
-        return {
-          id: `ew-${entity.id}`,
-          sourceEntityId: entity.id,
-          kind: 'electronic-jamming',
-          mode: 'omni',
-          side: entity.side,
-          position,
-          headingDeg: position.heading ?? entity.position.heading ?? 0,
+        if (ewConfig.areaEnabled) {
+          emitters.push({
+            id: `ew-${entity.id}-area`,
+            sourceEntityId: entity.id,
+            kind: 'electronic-jamming',
+            mode: 'omni',
+            side: entity.side,
+            position,
+            headingDeg: position.heading ?? entity.position.heading ?? 0,
+            rangeMeters: zone.radius,
+            azimuthCenterDeg: 0,
+            azimuthWidthDeg: 360,
+            elevationMinDeg: entity.type === 'air-jammer' ? -20 : 0,
+            elevationMaxDeg: entity.type === 'air-jammer' ? 65 : 45,
+            pulseCycleMs,
+            active: true,
+          });
+        }
+
+        selectElectronicWarfareTargets({
+          jammerSide: entity.side,
+          jammerPosition: position,
           rangeMeters: zone.radius,
-          azimuthCenterDeg: 0,
-          azimuthWidthDeg: 360,
-          elevationMinDeg: entity.type === 'air-jammer' ? -20 : 0,
-          elevationMaxDeg: entity.type === 'air-jammer' ? 65 : 45,
-          pulseCycleMs,
-          active: true,
-        };
+          tracking: ewConfig,
+          entities: entities.map(item => ({
+            id: item.id,
+            side: item.side,
+            type: item.type,
+            position: this.entityPositions.get(item.id) ?? item.position,
+          })),
+          weapons: this.lastRuntimeWeapons.map(weapon => ({
+            id: weapon.id,
+            launcherSide: this.getEntitySide(weapon.launcherId) ?? entity.side,
+            currentPosition: weapon.currentPosition,
+          })),
+        }).forEach((target) => {
+          const elevation = calculateElevationDeg(position, target.position);
+          emitters.push({
+            id: `ew-${entity.id}-track-${target.category}-${target.id}`,
+            sourceEntityId: entity.id,
+            kind: 'electronic-jamming',
+            mode: 'track',
+            side: entity.side,
+            position,
+            headingDeg: calculateHeadingDeg(position, target.position),
+            rangeMeters: Math.min(zone.radius, Math.max(1, target.distanceMeters)),
+            azimuthCenterDeg: 0,
+            azimuthWidthDeg: 14,
+            elevationMinDeg: elevation - 7,
+            elevationMaxDeg: elevation + 7,
+            pulseCycleMs,
+            active: true,
+          });
+        });
+
+        return emitters;
       })
-      .filter((emitter): emitter is EmitterVolume => emitter !== null)
       .slice(0, maxPulses);
+  }
+
+  private syncElectronicWarfareRanges(): void {
+    if (!this.scenario) return;
+    const entities = this.scenario.forces.flatMap(force => force.entities);
+
+    this.scenario.detectionZones.forEach((zone) => {
+      const entity = entities.find(item => item.id === zone.entityId);
+      if (!entity) return;
+      if (entity.type !== 'air-jammer' && entity.type !== 'ground-ew') return;
+      if (!zone.label?.includes('电子战')) return;
+      this.ewManager.overrideJammerRadius(entity.id, zone.radiusMeters);
+    });
   }
 
   private getEmitterModeForEntity(type: string): EmitterVolume['mode'] {
@@ -561,7 +672,8 @@ export class ExecutionEngine {
 
   private syncRuntimeVisuals(
     weapons: Weapon[] = [],
-    includeEmitters = shouldIncludeRuntimeEmitters(this.status, this.runtimeEmitterDebugVisible),
+    includeRadarEmitters = shouldIncludeRuntimeEmitters(this.status, this.runtimeRadarEmitterDebugVisible),
+    includeEWEmitters = shouldIncludeRuntimeEWEmitters(this.status, this.runtimeEWEmitterDebugVisible),
   ): void {
     this.lastRuntimeWeapons = weapons;
     this.renderer.updateRuntimeVisuals({
@@ -569,8 +681,8 @@ export class ExecutionEngine {
       executionStatus: this.status,
       entities: new Map(this.entityPositions),
       weapons,
-      sensorEmitters: includeEmitters ? this.createSensorEmitters() : [],
-      ewEmitters: includeEmitters ? this.createEWEmitters() : [],
+      sensorEmitters: includeRadarEmitters ? this.createSensorEmitters() : [],
+      ewEmitters: includeEWEmitters ? this.createEWEmitters() : [],
       explosions: Array.from(this.activeExplosions.values()),
     });
   }
@@ -992,6 +1104,7 @@ export class ExecutionEngine {
         type: effectType,
         position: event.hitPosition,
         startTimeMs: this.getGlobalVirtualTimeMs(),
+        triggeredAtMs: performance.now(),
         damage: event.damage,
       });
     });
@@ -1015,6 +1128,7 @@ export class ExecutionEngine {
       } else {
         this.status = 'completed';
         this.syncRuntimeVisuals([]);
+        this.startPostCompletionVisualLoop();
         this.onPhaseComplete?.(phase);
         this.notifyStatusChange();
         this.animationFrameId = null;

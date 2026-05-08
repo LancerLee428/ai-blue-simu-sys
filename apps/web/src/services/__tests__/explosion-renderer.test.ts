@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-import { createExplosionDescriptor, getExplosionStatusAtTime } from '../explosion-renderer';
+import {
+  createExplosionDescriptor,
+  createExplosionParticleConfig,
+  getExplosionStatusAtTime,
+} from '../explosion-renderer';
 
 test('createExplosionDescriptor should include professional visual layers and lifecycle defaults', () => {
   const descriptor = createExplosionDescriptor({
@@ -25,7 +31,7 @@ test('createExplosionDescriptor should include professional visual layers and li
   assert.ok(descriptor.radius >= 96);
   assert.deepEqual(
     descriptor.layers.map(layer => layer.kind),
-    ['flash', 'fireball', 'shockwave', 'smoke', 'debris'],
+    ['flash', 'fireball', 'ground-burst', 'shockwave', 'smoke-column', 'sparks'],
   );
 });
 
@@ -49,6 +55,25 @@ test('createExplosionDescriptor should cap radius by explicit effect when damage
   assert.equal(descriptor.durationMs, 3_000);
 });
 
+test('createExplosionDescriptor should respect longer configured visual duration', () => {
+  const descriptor = createExplosionDescriptor({
+    id: 'explosion-long-duration',
+    type: 'missile-impact',
+    position: { longitude: 121, latitude: 25, altitude: 0 },
+    damage: 650,
+    effect: {
+      type: 'missile-impact',
+      radius: 72,
+      durationMs: 8_000,
+      innerColor: '#ffd27a',
+      outerColor: '#ff5500',
+    },
+    startTimeMs: 10_000,
+  });
+
+  assert.equal(descriptor.durationMs, 8_000);
+});
+
 test('getExplosionStatusAtTime should derive lifecycle from virtual time', () => {
   const descriptor = createExplosionDescriptor({
     id: 'explosion-virtual-time',
@@ -68,4 +93,118 @@ test('getExplosionStatusAtTime should derive lifecycle from virtual time', () =>
   assert.equal(getExplosionStatusAtTime(descriptor, 10_100).status, 'active');
   assert.equal(getExplosionStatusAtTime(descriptor, 12_300).status, 'fading');
   assert.equal(getExplosionStatusAtTime(descriptor, 13_100).status, 'complete');
+});
+
+test('getExplosionStatusAtTime should derive lifecycle from real visual time when provided', () => {
+  const descriptor = createExplosionDescriptor({
+    id: 'explosion-real-time',
+    type: 'missile-impact',
+    position: { longitude: 121, latitude: 25, altitude: 0 },
+    damage: 650,
+    effect: {
+      type: 'missile-impact',
+      radius: 72,
+      durationMs: 1000,
+      innerColor: '#ffd27a',
+      outerColor: '#ff5500',
+    },
+    startTimeMs: 10_000,
+    visualStartTimeMs: 50_000,
+  });
+
+  assert.equal(getExplosionStatusAtTime(descriptor, 200_000, 50_100).status, 'active');
+  assert.equal(getExplosionStatusAtTime(descriptor, 200_000, 52_300).status, 'fading');
+  assert.equal(getExplosionStatusAtTime(descriptor, 200_000, 53_100).status, 'complete');
+});
+
+test('createExplosionParticleConfig should split explosion into fire, smoke, dust and spark emitters', () => {
+  const descriptor = createExplosionDescriptor({
+    id: 'explosion-particles',
+    type: 'ship-impact',
+    position: { longitude: 121, latitude: 25, altitude: 0 },
+    damage: 2400,
+    effect: {
+      type: 'ship-impact',
+      radius: 96,
+      durationMs: 1400,
+      innerColor: '#ffe3a1',
+      outerColor: '#ff3b30',
+    },
+    startTimeMs: 10_000,
+  });
+
+  const config = createExplosionParticleConfig(descriptor);
+
+  assert.equal(config.fire.lifetimeSec > 0, true);
+  assert.equal(config.smoke.lifetimeSec > config.fire.lifetimeSec, true);
+  assert.equal(config.dust.emissionRate > 0, true);
+  assert.equal(config.sparks.bursts.length > 0, true);
+  assert.equal(config.smoke.imageSize.max > config.fire.imageSize.max, true);
+});
+
+test('createExplosionParticleConfig should keep every particle layer inside the descriptor lifetime', () => {
+  const descriptor = createExplosionDescriptor({
+    id: 'explosion-particle-lifetime',
+    type: 'missile-impact',
+    position: { longitude: 121, latitude: 25, altitude: 0 },
+    damage: 1800,
+    effect: {
+      type: 'missile-impact',
+      radius: 72,
+      durationMs: 3_000,
+      innerColor: '#ffd27a',
+      outerColor: '#ff5500',
+    },
+    startTimeMs: 10_000,
+  });
+  const config = createExplosionParticleConfig(descriptor);
+  const durationSec = descriptor.durationMs / 1000;
+
+  for (const [layer, layerConfig] of Object.entries(config)) {
+    assert.ok(
+      layerConfig.lifetimeSec + layerConfig.particleLifeSec.max <= durationSec,
+      `${layer} particle layer outlives explosion cleanup window`,
+    );
+  }
+});
+
+test('ExplosionRenderer should use Cesium particle systems instead of per-frame billboard images', () => {
+  const sourcePath = fileURLToPath(new URL('../explosion-renderer.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.equal(source.includes('createFrameCanvas'), false);
+  assert.equal(source.includes('toDataURL'), false);
+  assert.equal(/billboard\s*:/.test(source), false);
+});
+
+test('ExplosionRenderer particles should stay visible from the scenario overview camera', () => {
+  const sourcePath = fileURLToPath(new URL('../explosion-renderer.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.equal(source.includes('sizeInMeters: true'), false);
+});
+
+test('MapRenderer should not keep the legacy strike explosion animation path', () => {
+  const sourcePath = fileURLToPath(new URL('../map-renderer.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.equal(source.includes('renderStrikeExplosion'), false);
+  assert.equal(source.includes('Date.now()'), false);
+  assert.equal(source.includes('postRender.addEventListener'), false);
+});
+
+test('ExecutionEngine should not prune active explosions with a hard-coded 3000ms window', () => {
+  const sourcePath = fileURLToPath(new URL('../execution-engine.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.equal(source.includes('visualTimeMs - explosion.triggeredAtMs >= 3_000'), false);
+});
+
+test('WorkbenchView should load the active action plan before runtime debug effects are toggled', () => {
+  const sourcePath = fileURLToPath(new URL('../../views/WorkbenchView.vue', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.equal(source.includes('function syncActivePlanToRuntime'), true);
+  assert.equal(source.includes('watch(() => actionPlanStore.activePlanId'), true);
+  assert.equal(source.includes('syncActivePlanToRuntime({ flyTo: true })'), true);
 });

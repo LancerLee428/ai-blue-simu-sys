@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import * as Cesium from 'cesium';
 import { usePlatformStore } from '../stores/platform';
 import { useEntityState } from '../composables/useEntityState';
@@ -39,7 +39,10 @@ const selectedRouteId = ref<string | null>(null);
 const routeDecisions = ref<Map<string, RouteDecision>>(new Map());
 const showSimulationDrawer = ref(false);
 const staticDetectionVisible = ref(true);
-const runtimeRadarScanVisible = ref(false);
+const runtimeRadarScanVisible = ref<boolean | null>(null);
+const runtimeJammingVisible = ref<boolean | null>(null);
+const runtimeExplosionVisible = ref<boolean | null>(null);
+const loadedRuntimePlanId = ref<string | null>(null);
 
 // 组件卸载时清理
 onUnmounted(() => {
@@ -76,7 +79,25 @@ function syncExecutionStateFromEngine() {
   });
 }
 
+function syncActivePlanToRuntime(options: { flyTo?: boolean } = {}) {
+  const activePlan = actionPlanStore.activePlan;
+  const engine = executionEngineRef.value;
+  const renderer = mapRendererRef.value;
+  if (!activePlan || !engine || !renderer) return false;
+  if (loadedRuntimePlanId.value === activePlan.id) return true;
+
+  engine.load(activePlan.scenario);
+  renderer.renderScenario(activePlan.scenario);
+  if (options.flyTo) {
+    renderer.flyToScenario(activePlan.scenario);
+  }
+  loadedRuntimePlanId.value = activePlan.id;
+  syncExecutionStateFromEngine();
+  return true;
+}
+
 function handleSimulationPlay() {
+  syncActivePlanToRuntime();
   executionEngineRef.value?.play();
   syncExecutionStateFromEngine();
 }
@@ -87,26 +108,31 @@ function handleSimulationPause() {
 }
 
 function handleSimulationReset() {
+  syncActivePlanToRuntime();
   executionEngineRef.value?.stop();
   syncExecutionStateFromEngine();
 }
 
 function handleSimulationStepForward(stepSeconds: number) {
+  syncActivePlanToRuntime();
   executionEngineRef.value?.step(stepSeconds);
   syncExecutionStateFromEngine();
 }
 
 function handleSimulationStepBackward(stepSeconds: number) {
+  syncActivePlanToRuntime();
   executionEngineRef.value?.step(-stepSeconds);
   syncExecutionStateFromEngine();
 }
 
 function handleSimulationPrevPhase() {
+  syncActivePlanToRuntime();
   executionEngineRef.value?.prevPhase();
   syncExecutionStateFromEngine();
 }
 
 function handleSimulationNextPhase() {
+  syncActivePlanToRuntime();
   executionEngineRef.value?.nextPhase();
   syncExecutionStateFromEngine();
 }
@@ -117,6 +143,7 @@ function handleSimulationSetSpeed(speed: number) {
 }
 
 function handleToggleStaticDetection(visible: boolean) {
+  syncActivePlanToRuntime();
   staticDetectionVisible.value = visible;
   mapRendererRef.value?.setRuntimeVisualDebugOptions({
     staticDetectionVisible: visible,
@@ -124,11 +151,30 @@ function handleToggleStaticDetection(visible: boolean) {
 }
 
 function handleToggleRuntimeRadarScan(visible: boolean) {
+  syncActivePlanToRuntime();
   runtimeRadarScanVisible.value = visible;
   mapRendererRef.value?.setRuntimeVisualDebugOptions({
     runtimeRadarScanVisible: visible,
   });
-  executionEngineRef.value?.setRuntimeEmitterDebugVisible(visible);
+  executionEngineRef.value?.setRuntimeRadarEmitterDebugVisible(visible);
+}
+
+function handleToggleRuntimeJamming(visible: boolean) {
+  syncActivePlanToRuntime();
+  runtimeJammingVisible.value = visible;
+  mapRendererRef.value?.setRuntimeVisualDebugOptions({
+    runtimeJammingVisible: visible,
+  });
+  executionEngineRef.value?.setRuntimeEWEmitterDebugVisible(visible);
+}
+
+function handleToggleRuntimeExplosion(visible: boolean) {
+  syncActivePlanToRuntime();
+  runtimeExplosionVisible.value = visible;
+  mapRendererRef.value?.setRuntimeVisualDebugOptions({
+    runtimeExplosionVisible: visible,
+  });
+  executionEngineRef.value?.refreshRuntimeVisuals();
 }
 
 // 部署配置弹窗状态
@@ -141,6 +187,23 @@ const deploymentConfig = ref<{
 
 onMounted(() => {
   store.bootstrap();
+});
+
+watch(() => actionPlanStore.activePlanId, (planId) => {
+  loadedRuntimePlanId.value = null;
+  runtimeRadarScanVisible.value = null;
+  runtimeJammingVisible.value = null;
+  runtimeExplosionVisible.value = null;
+  mapRendererRef.value?.setRuntimeVisualDebugOptions({
+    runtimeRadarScanVisible: null,
+    runtimeJammingVisible: null,
+    runtimeExplosionVisible: null,
+  });
+  executionEngineRef.value?.setRuntimeRadarEmitterDebugVisible(null);
+  executionEngineRef.value?.setRuntimeEWEmitterDebugVisible(null);
+  if (planId) {
+    syncActivePlanToRuntime({ flyTo: true });
+  }
 });
 
 /**
@@ -176,6 +239,8 @@ function handleViewerReady(viewer: Cesium.Viewer) {
   if (leftSidebarRef.value) {
     leftSidebarRef.value.setRouteDecisions(renderer.getRouteDecisions());
   }
+
+  syncActivePlanToRuntime({ flyTo: true });
 
   // 设置状态变化回调 - 同步到 ActionPlan Store
   engine.setOnStatusChange((status) => {
@@ -334,6 +399,8 @@ const scenarioEntities = computed(() => {
       :plan="actionPlanStore.activePlan"
       :static-detection-visible="staticDetectionVisible"
       :runtime-radar-scan-visible="runtimeRadarScanVisible"
+      :runtime-jamming-visible="runtimeJammingVisible"
+      :runtime-explosion-visible="runtimeExplosionVisible"
       @close="showSimulationDrawer = false"
       @play="handleSimulationPlay"
       @pause="handleSimulationPause"
@@ -345,6 +412,8 @@ const scenarioEntities = computed(() => {
       @set-speed="handleSimulationSetSpeed"
       @toggle-static-detection="handleToggleStaticDetection"
       @toggle-runtime-radar-scan="handleToggleRuntimeRadarScan"
+      @toggle-runtime-jamming="handleToggleRuntimeJamming"
+      @toggle-runtime-explosion="handleToggleRuntimeExplosion"
     />
 
     <!-- 部署配置弹窗 -->

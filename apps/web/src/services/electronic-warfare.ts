@@ -39,6 +39,13 @@ export class ElectronicWarfareManager {
     }
   }
 
+  overrideJammerRadius(entityId: string, radiusMeters: number): void {
+    const zone = this.jammerZones.get(entityId);
+    if (zone && radiusMeters > 0) {
+      zone.radius = radiusMeters;
+    }
+  }
+
   /**
    * 计算探测范围受干扰后的实际范围
    */

@@ -7,3 +7,6 @@ dist/
 .env.local
 apps/web/.env.local
 data-example
+.superpowers/
+claude-mind-plan/
+gpt-mind-plan/

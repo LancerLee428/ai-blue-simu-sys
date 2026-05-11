@@ -15,6 +15,7 @@ import type {
   Phase,
   PlatformType,
   RadarTrackingConfig,
+  Route,
   StateMachineConfig,
   StrikeTask,
   TacticalEvent,
@@ -23,6 +24,10 @@ import type {
   VisualEffectsConfig,
   WeaponEffectConfig,
   ExplosionEffectConfig,
+  WeaponTrajectoryKeyPoint,
+  WeaponTrajectoryPlan,
+  VisualModelConfig,
+  VisualModelAlias,
 } from '../types/tactical-scenario';
 import { PLATFORM_META } from '../types/tactical-scenario';
 import {
@@ -48,6 +53,39 @@ function isPlatformType(value: unknown): value is PlatformType {
   return typeof value === 'string' && value in PLATFORM_META;
 }
 
+function isVisualModelAlias(value: unknown): value is VisualModelAlias {
+  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+}
+
+function normalizeVisualModelConfig(input: unknown): VisualModelConfig | undefined {
+  const raw = input as LooseRecord | undefined;
+  if (!raw) return undefined;
+
+  const alias = raw.alias ?? raw.modelAlias;
+  const uri = raw.uri ?? raw.modelUri;
+  const scale = raw.scale ?? raw.modelScale;
+  const minimumPixelSize = raw.minimumPixelSize ?? raw.modelMinimumPixelSize;
+  const maximumScale = raw.maximumScale ?? raw.modelMaximumScale;
+  const headingOffsetDeg = raw.headingOffsetDeg ?? raw.modelHeadingOffsetDeg;
+  const pitchOffsetDeg = raw.pitchOffsetDeg ?? raw.modelPitchOffsetDeg;
+  const rollOffsetDeg = raw.rollOffsetDeg ?? raw.modelRollOffsetDeg;
+  const heightOffsetMeters = raw.heightOffsetMeters ?? raw.modelHeightOffsetMeters;
+
+  const model: VisualModelConfig = {
+    ...(isVisualModelAlias(alias) ? { alias } : {}),
+    ...(uri ? { uri: String(uri) } : {}),
+    ...(scale !== undefined ? { scale: Number(scale) } : {}),
+    ...(minimumPixelSize !== undefined ? { minimumPixelSize: Number(minimumPixelSize) } : {}),
+    ...(maximumScale !== undefined ? { maximumScale: Number(maximumScale) } : {}),
+    ...(headingOffsetDeg !== undefined ? { headingOffsetDeg: Number(headingOffsetDeg) } : {}),
+    ...(pitchOffsetDeg !== undefined ? { pitchOffsetDeg: Number(pitchOffsetDeg) } : {}),
+    ...(rollOffsetDeg !== undefined ? { rollOffsetDeg: Number(rollOffsetDeg) } : {}),
+    ...(heightOffsetMeters !== undefined ? { heightOffsetMeters: Number(heightOffsetMeters) } : {}),
+  };
+
+  return Object.keys(model).length > 0 ? model : undefined;
+}
+
 function normalizePosition(position: Partial<GeoPosition> | undefined): GeoPosition {
   return {
     longitude: Number(position?.longitude ?? 0),
@@ -55,6 +93,44 @@ function normalizePosition(position: Partial<GeoPosition> | undefined): GeoPosit
     altitude: Number(position?.altitude ?? 0),
     ...(position?.heading !== undefined ? { heading: Number(position.heading) } : {}),
     ...(position?.orbit ? { orbit: position.orbit } : {}),
+  };
+}
+
+function normalizeTrajectoryPoint(point: LooseRecord, index: number, total: number): WeaponTrajectoryKeyPoint | null {
+  const position = normalizePosition(point.position);
+  if (!Number.isFinite(position.longitude) || !Number.isFinite(position.latitude)) return null;
+  const progress = point.progress === undefined
+    ? (total <= 1 ? 0 : index / (total - 1))
+    : Math.max(0, Math.min(1, Number(point.progress)));
+
+  return {
+    ...(point.id ? { id: String(point.id) } : {}),
+    ...(point.role === 'launch'
+      || point.role === 'boost'
+      || point.role === 'cruise'
+      || point.role === 'terminal'
+      || point.role === 'impact'
+      || point.role === 'custom'
+      ? { role: point.role }
+      : {}),
+    progress,
+    position,
+  };
+}
+
+function normalizeWeaponTrajectoryPlan(input: unknown): WeaponTrajectoryPlan | undefined {
+  const raw = input as LooseRecord | undefined;
+  if (!raw) return undefined;
+  const rawPoints = asArray<LooseRecord>(raw.points);
+  const points = rawPoints
+    .map((point, index) => normalizeTrajectoryPoint(point, index, rawPoints.length))
+    .filter((point): point is WeaponTrajectoryKeyPoint => point !== null);
+  if (points.length < 2) return undefined;
+
+  return {
+    mode: raw.mode === 'typed' ? 'typed' : 'manual',
+    interpolation: raw.interpolation === 'linear' ? 'linear' : 'catmull-rom',
+    points,
   };
 }
 
@@ -288,6 +364,7 @@ function normalizeWeaponEffect(effect: LooseRecord): WeaponEffectConfig | null {
   const weaponId = String(effect.weaponId ?? effect.id ?? '').trim();
   if (!weaponId) return null;
   const defaults = getWeaponEffectDefaults(weaponId);
+  const visualModel = normalizeVisualModelConfig(effect.visualModel ?? effect);
   return {
     weaponId,
     trailEnabled: effect.trailEnabled !== false,
@@ -296,6 +373,7 @@ function normalizeWeaponEffect(effect: LooseRecord): WeaponEffectConfig | null {
     iconStyle: effect.iconStyle === 'anti-ship' || effect.iconStyle === 'bomb' || effect.iconStyle === 'rocket'
       ? effect.iconStyle
       : defaults.iconStyle,
+    ...(visualModel ? { visualModel } : {}),
   };
 }
 
@@ -459,6 +537,36 @@ function findNearestEnemy(scenario: TacticalScenario, entity: EntitySpec, positi
     .sort((a, b) => a.distance - b.distance)[0]?.candidate;
 }
 
+function resolveRouteAltitude(entity: EntitySpec | undefined, altitude: number): number {
+  if (!entity) return altitude;
+  const meta = PLATFORM_META[entity.type];
+  if (meta?.operatingDomain !== 'air') return altitude;
+  if (altitude > 0) return altitude;
+  return meta.defaultAltitude;
+}
+
+function normalizeRoutes(scenario: TacticalScenario): Route[] {
+  return asArray<LooseRecord>(scenario.routes).map(route => {
+    const entity = findEntity(scenario, String(route.entityId ?? ''));
+    return {
+      ...route,
+      entityId: String(route.entityId ?? ''),
+      side: isSide(route.side) ? route.side : entity?.side ?? 'red',
+      points: asArray<LooseRecord>(route.points).map(point => {
+        const position = normalizePosition(point.position);
+        return {
+          ...(point.timestamp !== undefined ? { timestamp: Number(point.timestamp) } : {}),
+          position: {
+            ...position,
+            altitude: resolveRouteAltitude(entity, position.altitude),
+          },
+        };
+      }),
+      ...(route.label ? { label: String(route.label) } : {}),
+    };
+  }).filter(route => route.entityId && route.points.length > 0);
+}
+
 function normalizeDetectionZones(scenario: TacticalScenario): DetectionZone[] {
   return asArray<LooseRecord>(scenario.detectionZones).map(zone => {
     const entity = findEntity(scenario, String(zone.entityId ?? ''));
@@ -490,6 +598,7 @@ function normalizePhases(scenario: TacticalScenario): Phase[] {
       ...(event.targetEntityId ? { targetEntityId: String(event.targetEntityId) } : {}),
       ...(event.weaponId ? { weaponId: String(event.weaponId) } : {}),
       ...(event.weaponType ? { weaponType: String(event.weaponType) } : {}),
+      ...(event.weaponTrajectory ? { weaponTrajectory: normalizeWeaponTrajectoryPlan(event.weaponTrajectory) } : {}),
       detail: String(event.detail ?? ''),
     } as TacticalEvent)).filter(event => event.sourceEntityId);
 
@@ -517,7 +626,16 @@ function normalizePhases(scenario: TacticalScenario): Phase[] {
 }
 
 function inferStrikeTasksFromRoutes(scenario: TacticalScenario): StrikeTask[] {
-  const existing = asArray<StrikeTask>(scenario.strikeTasks);
+  const existing = asArray<LooseRecord>(scenario.strikeTasks).map(task => ({
+    ...task,
+    id: String(task.id ?? ''),
+    attackerEntityId: String(task.attackerEntityId ?? ''),
+    targetEntityId: String(task.targetEntityId ?? ''),
+    phaseId: String(task.phaseId ?? ''),
+    timestamp: Number(task.timestamp ?? 0),
+    detail: String(task.detail ?? ''),
+    ...(task.weaponTrajectory ? { weaponTrajectory: normalizeWeaponTrajectoryPlan(task.weaponTrajectory) } : {}),
+  })).filter((task): task is StrikeTask => Boolean(task.id && task.attackerEntityId && task.targetEntityId));
   if (existing.length > 0) return existing;
 
   return asArray<LooseRecord>(scenario.routes).map((route, index) => {
@@ -540,6 +658,34 @@ function inferStrikeTasksFromRoutes(scenario: TacticalScenario): StrikeTask[] {
   }).filter((task): task is StrikeTask => task !== null);
 }
 
+function alignUntimedRouteToStrikeTasks(scenario: TacticalScenario): void {
+  const timestampByAttacker = new Map<string, number>();
+  for (const task of scenario.strikeTasks) {
+    if (!Number.isFinite(task.timestamp)) continue;
+    const existing = timestampByAttacker.get(task.attackerEntityId);
+    if (existing === undefined || task.timestamp < existing) {
+      timestampByAttacker.set(task.attackerEntityId, task.timestamp);
+    }
+  }
+
+  scenario.routes = scenario.routes.map(route => {
+    if (route.points.length === 0 || route.points.some(point => point.timestamp !== undefined)) {
+      return route;
+    }
+
+    const launchTimestamp = timestampByAttacker.get(route.entityId);
+    if (launchTimestamp === undefined) return route;
+    const lastIndex = route.points.length - 1;
+    return {
+      ...route,
+      points: route.points.map((point, index) => ({
+        ...point,
+        timestamp: lastIndex === 0 ? 0 : (launchTimestamp * index) / lastIndex,
+      })),
+    };
+  });
+}
+
 function addAttackEventsFromStrikeTasks(scenario: TacticalScenario): void {
   if (scenario.phases.length === 0 || scenario.strikeTasks.length === 0) return;
 
@@ -551,7 +697,22 @@ function addAttackEventsFromStrikeTasks(scenario: TacticalScenario): void {
       && event.sourceEntityId === task.attackerEntityId
       && event.targetEntityId === task.targetEntityId
     );
-    if (exists) continue;
+    if (exists) {
+      if (task.weaponTrajectory) {
+        phase.events = phase.events.map(event => {
+          if (
+            event.type === 'attack'
+            && event.sourceEntityId === task.attackerEntityId
+            && event.targetEntityId === task.targetEntityId
+            && !event.weaponTrajectory
+          ) {
+            return { ...event, weaponTrajectory: task.weaponTrajectory };
+          }
+          return event;
+        });
+      }
+      continue;
+    }
 
     phase.events.push({
       type: 'attack',
@@ -559,6 +720,7 @@ function addAttackEventsFromStrikeTasks(scenario: TacticalScenario): void {
       sourceEntityId: task.attackerEntityId,
       targetEntityId: task.targetEntityId,
       detail: task.detail,
+      ...(task.weaponTrajectory ? { weaponTrajectory: task.weaponTrajectory } : {}),
     });
   }
 }
@@ -598,20 +760,24 @@ export function normalizeTacticalScenario(input: TacticalScenario): TacticalScen
     return {
       side,
       name: String(force.name ?? (side === 'red' ? '红方' : '蓝方')),
-      entities: asArray<LooseRecord>(force.entities).map(entity => ({
-        ...entity,
-        id: String(entity.id ?? `entity-${Date.now()}`),
-        name: String(entity.name ?? entity.id ?? '未命名实体'),
-        type: isPlatformType(entity.type) ? entity.type : 'facility-target',
-        side: isSide(entity.side) ? entity.side : side,
-        position: normalizePosition(entity.position),
-        loadout: normalizeLoadout(entity),
-        components: asArray(entity.components),
-      })),
+      entities: asArray<LooseRecord>(force.entities).map(entity => {
+        const visualModel = normalizeVisualModelConfig(entity.visualModel ?? entity);
+        return {
+          ...entity,
+          id: String(entity.id ?? `entity-${Date.now()}`),
+          name: String(entity.name ?? entity.id ?? '未命名实体'),
+          type: isPlatformType(entity.type) ? entity.type : 'facility-target',
+          side: isSide(entity.side) ? entity.side : side,
+          position: normalizePosition(entity.position),
+          loadout: normalizeLoadout(entity),
+          ...(visualModel ? { visualModel } : {}),
+          components: asArray(entity.components),
+        };
+      }),
     };
   });
 
-  scenario.routes = asArray(scenario.routes);
+  scenario.routes = normalizeRoutes(scenario);
   scenario.detectionZones = normalizeDetectionZones(scenario);
   scenario.phases = normalizePhases(scenario);
 
@@ -635,6 +801,7 @@ export function normalizeTacticalScenario(input: TacticalScenario): TacticalScen
   }
 
   scenario.strikeTasks = inferStrikeTasksFromRoutes(scenario);
+  alignUntimedRouteToStrikeTasks(scenario);
   addAttackEventsFromStrikeTasks(scenario);
   ensureAttackLoadouts(scenario);
 

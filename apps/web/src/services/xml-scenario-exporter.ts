@@ -21,6 +21,7 @@ import type {
   Phase,
   VisualEffectsConfig,
   ElectronicWarfareEffectsConfig,
+  VisualModelConfig,
 } from '../types/tactical-scenario';
 import { normalizeTacticalScenario } from './tactical-scenario-normalizer';
 
@@ -53,6 +54,38 @@ function appendInitialStateValue(doc: Document, parent: Element, key: string, va
   if (value === undefined || value === null || key === 'positionType' || key === 'orbitType') return;
   if (typeof value === 'object') return;
   parent.appendChild(el(doc, key, String(value)));
+}
+
+function getVisualModelAttributes(model: VisualModelConfig | undefined): Record<string, string> {
+  if (!model) return {};
+
+  return {
+    ...(model.alias ? { alias: model.alias } : {}),
+    ...(model.uri ? { uri: model.uri } : {}),
+    ...(model.scale !== undefined ? { scale: String(model.scale) } : {}),
+    ...(model.minimumPixelSize !== undefined ? { minimumPixelSize: String(model.minimumPixelSize) } : {}),
+    ...(model.maximumScale !== undefined ? { maximumScale: String(model.maximumScale) } : {}),
+    ...(model.headingOffsetDeg !== undefined ? { headingOffsetDeg: String(model.headingOffsetDeg) } : {}),
+    ...(model.pitchOffsetDeg !== undefined ? { pitchOffsetDeg: String(model.pitchOffsetDeg) } : {}),
+    ...(model.rollOffsetDeg !== undefined ? { rollOffsetDeg: String(model.rollOffsetDeg) } : {}),
+    ...(model.heightOffsetMeters !== undefined ? { heightOffsetMeters: String(model.heightOffsetMeters) } : {}),
+  };
+}
+
+function getWeaponVisualModelAttributes(model: VisualModelConfig | undefined): Record<string, string> {
+  if (!model) return {};
+
+  return {
+    ...(model.alias ? { modelAlias: model.alias } : {}),
+    ...(model.uri ? { modelUri: model.uri } : {}),
+    ...(model.scale !== undefined ? { modelScale: String(model.scale) } : {}),
+    ...(model.minimumPixelSize !== undefined ? { modelMinimumPixelSize: String(model.minimumPixelSize) } : {}),
+    ...(model.maximumScale !== undefined ? { modelMaximumScale: String(model.maximumScale) } : {}),
+    ...(model.headingOffsetDeg !== undefined ? { modelHeadingOffsetDeg: String(model.headingOffsetDeg) } : {}),
+    ...(model.pitchOffsetDeg !== undefined ? { modelPitchOffsetDeg: String(model.pitchOffsetDeg) } : {}),
+    ...(model.rollOffsetDeg !== undefined ? { modelRollOffsetDeg: String(model.rollOffsetDeg) } : {}),
+    ...(model.heightOffsetMeters !== undefined ? { modelHeightOffsetMeters: String(model.heightOffsetMeters) } : {}),
+  };
 }
 
 function ensureGeodeticState(doc: Document, compEl: Element, pos: EntitySpec['position']) {
@@ -177,6 +210,7 @@ function exportEquipment(doc: Document, entity: EntitySpec): Element {
   eqEl.appendChild(el(doc, 'Name', entity.name));
   if (entity.modelId) eqEl.appendChild(el(doc, 'ModelId', entity.modelId));
   if (entity.modelType) eqEl.appendChild(el(doc, 'ModelType', entity.modelType));
+  if (entity.visualModel) eqEl.appendChild(elAttr(doc, 'VisualModel', getVisualModelAttributes(entity.visualModel)));
   if (entity.interfaceProtocol) eqEl.appendChild(el(doc, 'InterfaceProtocol', entity.interfaceProtocol));
   if (entity.federateName) eqEl.appendChild(el(doc, 'FederateName', entity.federateName));
 
@@ -443,6 +477,7 @@ function exportVisualEffects(doc: Document, root: Element, visualEffects: Visual
       trailColor: effect.trailColor,
       trailWidth: String(effect.trailWidth),
       iconStyle: effect.iconStyle,
+      ...getWeaponVisualModelAttributes(effect.visualModel),
     }));
   }
   effectsEl.appendChild(weaponEffectsEl);
@@ -649,9 +684,37 @@ function exportStrikeTasks(doc: Document, root: Element, tasks: StrikeTask[]) {
       timestamp: String(task.timestamp),
       detail: task.detail
     });
+    exportWeaponTrajectory(doc, taskEl, task.weaponTrajectory);
     tasksEl.appendChild(taskEl);
   }
   root.appendChild(tasksEl);
+}
+
+function exportWeaponTrajectory(
+  doc: Document,
+  taskEl: Element,
+  trajectory: StrikeTask['weaponTrajectory'],
+): void {
+  if (!trajectory || trajectory.points.length < 2) return;
+
+  const trajectoryEl = elAttr(doc, 'WeaponTrajectory', {
+    mode: trajectory.mode ?? 'manual',
+    interpolation: trajectory.interpolation ?? 'catmull-rom',
+  });
+
+  trajectory.points.forEach((point, index) => {
+    trajectoryEl.appendChild(elAttr(doc, 'TrajectoryPoint', {
+      index: String(index),
+      ...(point.id ? { id: point.id } : {}),
+      ...(point.role ? { role: point.role } : {}),
+      ...(point.progress !== undefined ? { progress: String(point.progress) } : {}),
+      longitude: String(point.position.longitude),
+      latitude: String(point.position.latitude),
+      altitude: String(point.position.altitude ?? 0),
+    }));
+  });
+
+  taskEl.appendChild(trajectoryEl);
 }
 
 function exportPhases(doc: Document, root: Element, phases: Phase[]) {

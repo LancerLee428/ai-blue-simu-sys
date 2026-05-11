@@ -232,3 +232,117 @@ test('WeaponSystem should compress impact time into phase when demo runtime conf
   assert.ok(impactTimeMs > phase.events[0].timestamp * 1000);
   assert.ok(impactTimeMs <= phase.duration * 1000);
 });
+
+test('WeaponSystem should launch from attacker position at weapon launch time', () => {
+  const scenario = createScenario();
+  const phase = scenario.phases[0];
+  const weaponSystem = new WeaponSystem();
+  const launchTimeMs = Math.round(phase.events[0].timestamp * 1000 + WEAPON_DATABASE['aim-120d'].launchDelay * 1000);
+  const runtimeLaunch = { longitude: 121.08, latitude: 25.02, altitude: 9000 };
+  const evaluation = weaponSystem.evaluatePhase({
+    scenario,
+    phase,
+    previousTimeMs: launchTimeMs,
+    currentTimeMs: launchTimeMs + 3000,
+    getEntityPositionAtTime(entityId, timeMs) {
+      if (entityId === 'red-fighter') {
+        assert.equal(timeMs, launchTimeMs);
+        return runtimeLaunch;
+      }
+      const entity = scenario.forces.flatMap((force) => force.entities).find((item) => item.id === entityId);
+      assert.ok(entity, `missing entity: ${entityId}`);
+      return entity.position;
+    },
+  });
+
+  assert.equal(evaluation.weapons[0].launchPosition.longitude, runtimeLaunch.longitude);
+  assert.equal(evaluation.weapons[0].launchPosition.altitude, runtimeLaunch.altitude);
+});
+
+test('WeaponSystem should use manual attack trajectory key points when present', () => {
+  const scenario = createScenario();
+  const phase = scenario.phases[0];
+  const weaponSystem = new WeaponSystem();
+  const manualLaunch = { longitude: 121.02, latitude: 25.01, altitude: 9000 };
+  const manualCruise = { longitude: 121.12, latitude: 25.03, altitude: 12200 };
+  phase.events[0].weaponTrajectory = {
+    mode: 'manual',
+    interpolation: 'linear',
+    points: [
+      { role: 'launch', progress: 0, position: { longitude: 121, latitude: 25, altitude: 8000 } },
+      { role: 'cruise', progress: 0.5, position: manualCruise },
+      { role: 'impact', progress: 1, position: { longitude: 121.25, latitude: 25, altitude: 0 } },
+    ],
+  };
+
+  const impactTimeMs = weaponSystem.estimateImpactTimeMs({
+    scenario,
+    phase,
+    attackEvent: phase.events[0],
+    getEntityPositionAtTime(entityId, timeMs) {
+      if (entityId === 'red-fighter' && timeMs !== undefined) return manualLaunch;
+      const entity = scenario.forces.flatMap((force) => force.entities).find((item) => item.id === entityId);
+      assert.ok(entity, `missing entity: ${entityId}`);
+      return entity.position;
+    },
+  });
+
+  const launchTimeMs = Math.round(phase.events[0].timestamp * 1000 + WEAPON_DATABASE['aim-120d'].launchDelay * 1000);
+  const evaluation = weaponSystem.evaluatePhase({
+    scenario,
+    phase,
+    previousTimeMs: launchTimeMs,
+    currentTimeMs: launchTimeMs + Math.round((impactTimeMs - launchTimeMs) * 0.5),
+    getEntityPositionAtTime(entityId, timeMs) {
+      if (entityId === 'red-fighter' && timeMs !== undefined) return manualLaunch;
+      const entity = scenario.forces.flatMap((force) => force.entities).find((item) => item.id === entityId);
+      assert.ok(entity, `missing entity: ${entityId}`);
+      return entity.position;
+    },
+  });
+
+  assert.deepEqual(evaluation.weapons[0].launchPosition, manualLaunch);
+  assert.equal(Math.round(evaluation.weapons[0].currentPosition.altitude), manualCruise.altitude);
+  assert.deepEqual(evaluation.weapons[0].adjustedTargetPosition, phase.events[0].weaponTrajectory.points[2].position);
+});
+
+test('WeaponSystem should emit manual trajectory impact point as hit position', () => {
+  const scenario = createScenario();
+  const phase = scenario.phases[0];
+  const weaponSystem = new WeaponSystem();
+  const manualImpact = { longitude: 121.27, latitude: 25.04, altitude: 40 };
+  phase.events[0].weaponTrajectory = {
+    mode: 'manual',
+    interpolation: 'linear',
+    points: [
+      { role: 'launch', progress: 0, position: { longitude: 121, latitude: 25, altitude: 8000 } },
+      { role: 'terminal', progress: 0.85, position: { longitude: 121.22, latitude: 25.02, altitude: 500 } },
+      { role: 'impact', progress: 1, position: manualImpact },
+    ],
+  };
+
+  const impactTimeMs = weaponSystem.estimateImpactTimeMs({
+    scenario,
+    phase,
+    attackEvent: phase.events[0],
+    getEntityPositionAtTime(entityId) {
+      const entity = scenario.forces.flatMap((force) => force.entities).find((item) => item.id === entityId);
+      assert.ok(entity, `missing entity: ${entityId}`);
+      return entity.position;
+    },
+  });
+
+  const evaluation = weaponSystem.evaluatePhase({
+    scenario,
+    phase,
+    previousTimeMs: impactTimeMs - 100,
+    currentTimeMs: impactTimeMs + 100,
+    getEntityPositionAtTime(entityId) {
+      const entity = scenario.forces.flatMap((force) => force.entities).find((item) => item.id === entityId);
+      assert.ok(entity, `missing entity: ${entityId}`);
+      return entity.position;
+    },
+  });
+
+  assert.deepEqual(evaluation.impacts[0].hitPosition, manualImpact);
+});

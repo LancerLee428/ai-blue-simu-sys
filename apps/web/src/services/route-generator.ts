@@ -31,7 +31,7 @@ export class RouteGenerator {
 
     const points = this.interpolateRoute(
       startEntity.position,
-      targetEntity.position,
+      this.resolveRouteEndPosition(startEntity, targetEntity),
       intent.approach,
       startEntity.type,  // 传入实体类型用于高度约束
     );
@@ -52,6 +52,7 @@ export class RouteGenerator {
     if (route.points.length < 2) return route;
 
     const endPoint = route.points[route.points.length - 1].position;
+    const startEntity = this.findEntity(scenario, route.entityId);
 
     // 找最近的敌方实体
     let nearestEnemy: EntitySpec | null = null;
@@ -70,7 +71,14 @@ export class RouteGenerator {
 
     // 如果终点距离最近敌方 > 100km，自动延伸到敌方位置
     if (nearestEnemy && nearestDist > 100000) {
-      route.points.push({ position: { ...nearestEnemy.position } });
+      const isAirPlatform = startEntity
+        ? startEntity.type.startsWith('air-') || startEntity.type.startsWith('uav-') || startEntity.type.startsWith('helo-')
+        : false;
+      route.points.push({
+        position: isAirPlatform && startEntity
+          ? this.resolveRouteEndPosition(startEntity, nearestEnemy, endPoint)
+          : { ...nearestEnemy.position },
+      });
     }
 
     return route;
@@ -196,7 +204,7 @@ export class RouteGenerator {
       }
     }
 
-    // 终点
+    // 终点，空中平台语义上是发射点/投放点，不是目标本体位置。
     points.push({ position: { ...end } });
 
     return points;
@@ -251,6 +259,24 @@ export class RouteGenerator {
       return 500; // 无人机最低 500m
     }
     return 0;
+  }
+
+  private resolveRouteEndPosition(
+    startEntity: EntitySpec,
+    targetEntity: EntitySpec,
+    fromPosition: GeoPosition = startEntity.position,
+  ): GeoPosition {
+    const isAirPlatform = startEntity.type.startsWith('air-')
+      || startEntity.type.startsWith('uav-')
+      || startEntity.type.startsWith('helo-');
+    if (!isAirPlatform) return { ...targetEntity.position };
+
+    const standoffRatio = 0.82;
+    return {
+      longitude: fromPosition.longitude + (targetEntity.position.longitude - fromPosition.longitude) * standoffRatio,
+      latitude: fromPosition.latitude + (targetEntity.position.latitude - fromPosition.latitude) * standoffRatio,
+      altitude: this.getCruiseAltitude(startEntity.type, startEntity.position.altitude),
+    };
   }
 
   private findEntity(scenario: TacticalScenario, entityId: string): EntitySpec | null {

@@ -15,6 +15,7 @@ import type {
   EmitterVolume,
   ExplosionRuntimeState,
   Weapon,
+  Route,
 } from '../types/tactical-scenario';
 import type { MapRenderer } from './map-renderer';
 import { DetectionInteraction, type DetectionEvent } from './detection-interaction';
@@ -68,6 +69,11 @@ function calculateHeading(from: GeoPosition, to: GeoPosition): number {
   return (bearing + 360) % 360;
 }
 
+function hasHorizontalMovement(from: GeoPosition, to: GeoPosition): boolean {
+  return Math.abs(to.longitude - from.longitude) > 1e-8
+    || Math.abs(to.latitude - from.latitude) > 1e-8;
+}
+
 /**
  * 当前阶段每个实体的移动段：从 from → to，在 [0, durationMs] 内插值
  */
@@ -75,7 +81,80 @@ interface PhaseEntityMove {
   entityId: string;
   from: GeoPosition;
   to: GeoPosition;
+  route?: Route;
   durationMs: number;
+}
+
+export function sampleRoutePositionAtTime(route: Route, virtualMs: number): GeoPosition | null {
+  const points = route.points
+    .filter(point => point.position)
+    .map((point, index) => ({
+      index,
+      timestampMs: Number(point.timestamp ?? 0) * 1000,
+      position: point.position,
+    }))
+    .sort((left, right) => left.timestampMs - right.timestampMs || left.index - right.index);
+
+  if (points.length === 0) return null;
+  if (points.length === 1) return { ...points[0].position };
+  if (!points.some(point => point.timestampMs > 0)) return null;
+  if (virtualMs <= points[0].timestampMs) {
+    const heading = findRouteSegmentHeading(points, 1, 1);
+    return {
+      ...points[0].position,
+      ...(heading !== undefined ? { heading } : {}),
+    };
+  }
+
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const next = points[index];
+    if (virtualMs > next.timestampMs) continue;
+    const durationMs = Math.max(1, next.timestampMs - previous.timestampMs);
+    const t = (virtualMs - previous.timestampMs) / durationMs;
+    const heading = getRouteSegmentHeading(points, index);
+    return {
+      ...lerpPosition(previous.position, next.position, t),
+      ...(heading !== undefined ? { heading } : {}),
+    };
+  }
+
+  const heading = findRouteSegmentHeading(points, points.length - 1, -1);
+  return {
+    ...points[points.length - 1].position,
+    ...(heading !== undefined ? { heading } : {}),
+  };
+}
+
+function getRouteSegmentHeading(
+  points: Array<{ position: GeoPosition }>,
+  segmentEndIndex: number,
+): number | undefined {
+  const previous = points[segmentEndIndex - 1]?.position;
+  const next = points[segmentEndIndex]?.position;
+  if (previous && next && hasHorizontalMovement(previous, next)) {
+    return calculateHeading(previous, next);
+  }
+  return findRouteSegmentHeading(points, segmentEndIndex - 1, -1)
+    ?? findRouteSegmentHeading(points, segmentEndIndex + 1, 1);
+}
+
+function findRouteSegmentHeading(
+  points: Array<{ position: GeoPosition }>,
+  startSegmentEndIndex: number,
+  step: 1 | -1,
+): number | undefined {
+  for (
+    let index = startSegmentEndIndex;
+    index > 0 && index < points.length;
+    index += step
+  ) {
+    const previous = points[index - 1].position;
+    const next = points[index].position;
+    if (!hasHorizontalMovement(previous, next)) continue;
+    return calculateHeading(previous, next);
+  }
+  return undefined;
 }
 
 export class ExecutionEngine {
@@ -885,6 +964,7 @@ export class ExecutionEngine {
         entityId: state.entityId,
         from: { ...fromPos },
         to: { ...state.position },
+        route: this.scenario?.routes.find(route => route.entityId === state.entityId),
         durationMs: phaseDurationMs,
       });
     });
@@ -898,7 +978,8 @@ export class ExecutionEngine {
 
     this.currentPhaseMoves.forEach((move) => {
       const t = Math.max(0, Math.min(1, virtualMs / move.durationMs));
-      let newPos = lerpPosition(move.from, move.to, t);
+      let newPos = (move.route ? sampleRoutePositionAtTime(move.route, virtualMs) : null)
+        ?? lerpPosition(move.from, move.to, t);
 
       // 获取实体类型
       let entityType: string | undefined;
@@ -942,6 +1023,8 @@ export class ExecutionEngine {
   private findEntityPositionAtTime(entityId: string, virtualMs: number): GeoPosition | null {
     const move = this.currentPhaseMoves.find((item) => item.entityId === entityId);
     if (move) {
+      const routePosition = move.route ? sampleRoutePositionAtTime(move.route, virtualMs) : null;
+      if (routePosition) return routePosition;
       const t = Math.max(0, Math.min(1, virtualMs / move.durationMs));
       return lerpPosition(move.from, move.to, t);
     }
@@ -1039,7 +1122,7 @@ export class ExecutionEngine {
       phase,
       previousTimeMs: previousVirtualMs,
       currentTimeMs: this.virtualElapsedMs,
-      getEntityPositionAtTime: (entityId) => this.findEntityPositionAtTime(entityId, this.virtualElapsedMs),
+      getEntityPositionAtTime: (entityId, timeMs = this.virtualElapsedMs) => this.findEntityPositionAtTime(entityId, timeMs),
       runtimeConfig: this.scenario?.visualEffects?.weaponRuntime,
     });
 

@@ -9,24 +9,13 @@ import type {
   WeaponRuntimeConfig,
   WeaponSpec,
   WeaponStatus,
+  WeaponTrajectoryKeyPoint,
 } from '../types/tactical-scenario';
 import { resolveWeaponSpecForAttack } from './weapon-database';
+import { buildWeaponTrajectory } from './weapon-trajectory';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-function lerpPosition(from: GeoPosition, to: GeoPosition, t: number): GeoPosition {
-  return {
-    longitude: lerp(from.longitude, to.longitude, t),
-    latitude: lerp(from.latitude, to.latitude, t),
-    altitude: lerp(from.altitude, to.altitude, t),
-    heading: to.heading ?? from.heading,
-  };
 }
 
 function distanceMeters(from: GeoPosition, to: GeoPosition): number {
@@ -87,8 +76,18 @@ function getWeaponStatus(progress: number): WeaponStatus {
   return 'terminal';
 }
 
+function resolveTrajectoryKeyPoints(
+  keyPoints: WeaponTrajectoryKeyPoint[] | undefined,
+  launchPosition: GeoPosition,
+): WeaponTrajectoryKeyPoint[] | undefined {
+  if (!keyPoints || keyPoints.length < 2) return keyPoints;
+  return keyPoints.map((point, index) => index === 0 || point.role === 'launch'
+    ? { ...point, position: { ...launchPosition } }
+    : point);
+}
+
 export interface WeaponSystemEntityPositionResolver {
-  (entityId: string): GeoPosition | null;
+  (entityId: string, timeMs?: number): GeoPosition | null;
 }
 
 export interface WeaponPhaseContext {
@@ -122,17 +121,20 @@ export class WeaponSystem {
       return args.attackEvent.timestamp * 1000;
     }
 
-    const launchPosition = attacker.position;
-    const targetPosition = target.position;
     const weaponSpec = resolveWeaponSpecForAttack(attacker.loadout?.weapons, args.attackEvent.detail);
     if (!weaponSpec) {
       return args.attackEvent.timestamp * 1000;
     }
     const launchDelayMs = weaponSpec.launchDelay * 1000;
+    const launchTimeMs = Math.round(args.attackEvent.timestamp * 1000 + launchDelayMs);
+    const launchPosition = args.getEntityPositionAtTime(args.attackEvent.sourceEntityId, launchTimeMs) ?? attacker.position;
+    const targetPosition = args.attackEvent.targetEntityId
+      ? args.getEntityPositionAtTime(args.attackEvent.targetEntityId, launchTimeMs) ?? target.position
+      : target.position;
     const distance = distanceMeters(launchPosition, targetPosition);
     const rawCruiseDurationMs = (distance / Math.max(weaponSpec.cruiseSpeedMps, 1)) * 1000;
     const cruiseDurationMs = rawCruiseDurationMs * Math.max(0.001, args.runtimeConfig?.timeScaleForDemo ?? 1);
-    const rawImpactTimeMs = Math.round(args.attackEvent.timestamp * 1000 + launchDelayMs + cruiseDurationMs);
+    const rawImpactTimeMs = Math.round(launchTimeMs + cruiseDurationMs);
 
     if (args.runtimeConfig?.forceImpactWithinPhase) {
       const phaseEndMs = Math.max(args.attackEvent.timestamp * 1000 + 1, args.phase.duration * 1000);
@@ -160,8 +162,8 @@ export class WeaponSystem {
       if (!weaponSpec) continue;
       const weaponId = buildWeaponId(attackEvent, weaponSpec);
       const launchTimeMs = Math.round(attackEvent.timestamp * 1000 + weaponSpec.launchDelay * 1000);
-      const launchPosition = context.getEntityPositionAtTime(attacker.id) ?? attacker.position;
-      const targetPosition = context.getEntityPositionAtTime(target.id) ?? target.position;
+      const launchPosition = context.getEntityPositionAtTime(attacker.id, launchTimeMs) ?? attacker.position;
+      const targetPosition = context.getEntityPositionAtTime(target.id, launchTimeMs) ?? target.position;
       const impactTimeMs = this.estimateImpactTimeMs({
         scenario: context.scenario,
         phase: context.phase,
@@ -191,7 +193,16 @@ export class WeaponSystem {
       }
 
       if (context.previousTimeMs < impactTimeMs && context.currentTimeMs >= impactTimeMs) {
-        impacts.push(toImpactEvent(attackEvent, weaponId, weaponSpec, targetPosition));
+        const trajectoryResult = buildWeaponTrajectory({
+          spec: weaponSpec,
+          launchPosition,
+          targetPosition,
+          progress: 1,
+          sampleCount: 3,
+          keyPoints: resolveTrajectoryKeyPoints(attackEvent.weaponTrajectory?.points, launchPosition),
+          interpolation: attackEvent.weaponTrajectory?.interpolation,
+        });
+        impacts.push(toImpactEvent(attackEvent, weaponId, weaponSpec, trajectoryResult.adjustedTargetPosition));
       }
     }
 
@@ -210,11 +221,15 @@ export class WeaponSystem {
   }): Weapon {
     const durationMs = Math.max(args.impactTimeMs - args.launchTimeMs, 1);
     const progress = clamp((args.currentTimeMs - args.launchTimeMs) / durationMs, 0, 1);
-    const currentPosition = lerpPosition(args.launchPosition, args.targetPosition, progress);
     const sampleCount = Math.max(3, Math.ceil(progress * 12));
-    const trajectory = Array.from({ length: sampleCount }, (_, index) => {
-      const sampleT = sampleCount === 1 ? progress : (progress * index) / (sampleCount - 1);
-      return lerpPosition(args.launchPosition, args.targetPosition, sampleT);
+    const trajectoryResult = buildWeaponTrajectory({
+      spec: args.weaponSpec,
+      launchPosition: args.launchPosition,
+      targetPosition: args.targetPosition,
+      progress,
+      sampleCount,
+      keyPoints: resolveTrajectoryKeyPoints(args.attackEvent.weaponTrajectory?.points, args.launchPosition),
+      interpolation: args.attackEvent.weaponTrajectory?.interpolation,
     });
 
     return {
@@ -225,16 +240,17 @@ export class WeaponSystem {
       launchTime: args.launchTimeMs,
       impactTime: args.impactTimeMs,
       launchPosition: { ...args.launchPosition },
-      currentPosition,
-      targetPosition: { ...args.targetPosition },
+      currentPosition: trajectoryResult.currentPosition,
+      targetPosition: { ...trajectoryResult.adjustedTargetPosition },
       velocity: {
-        x: args.targetPosition.longitude - args.launchPosition.longitude,
-        y: args.targetPosition.latitude - args.launchPosition.latitude,
-        z: args.targetPosition.altitude - args.launchPosition.altitude,
+        x: trajectoryResult.adjustedTargetPosition.longitude - args.launchPosition.longitude,
+        y: trajectoryResult.adjustedTargetPosition.latitude - args.launchPosition.latitude,
+        z: trajectoryResult.adjustedTargetPosition.altitude - args.launchPosition.altitude,
       },
       status: getWeaponStatus(progress),
-      trajectory,
+      trajectory: trajectoryResult.trajectory,
       fuelRemaining: clamp(1 - progress, 0, 1),
+      adjustedTargetPosition: trajectoryResult.adjustedTargetPosition,
     };
   }
 

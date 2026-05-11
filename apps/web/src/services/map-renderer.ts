@@ -2,6 +2,7 @@
 import * as Cesium from 'cesium';
 import type {
   TacticalScenario,
+  EntitySpec,
   GeoPosition,
   ForceSide,
   Route,
@@ -36,6 +37,8 @@ import {
   shouldRenderRuntimeExplosions,
   shouldRenderRuntimeRadarScan,
 } from './runtime-visual-math';
+import { buildRuntimeWeaponTrail } from './runtime-weapon-trail';
+import { resolveVisualModel, resolveWeaponVisualModel, type ResolvedVisualModel } from './visual-models';
 
 export interface RuntimeVisualDebugOptions {
   staticDetectionVisible: boolean | null;
@@ -59,6 +62,9 @@ export class MapRenderer {
   private radarScanPrimitives = new Map<string, Cesium.Primitive>();
   private staticDetectionIds = new Set<string>();
   private visualEffects: VisualEffectsConfig | null = null;
+  private entityModelById = new Map<string, ResolvedVisualModel>();
+  private entityHeadingById = new Map<string, number>();
+  private weaponModelById = new Map<string, ResolvedVisualModel>();
   private explosionRenderer: ExplosionRenderer;
   private lastRuntimeVisualUpdate: RuntimeVisualUpdate | null = null;
   private debugExplosionFallbackPosition: GeoPosition | null = null;
@@ -97,6 +103,9 @@ export class MapRenderer {
     this.routeDecisions.clear();
     this.weaponIds.clear();
     this.staticDetectionIds.clear();
+    this.entityModelById.clear();
+    this.entityHeadingById.clear();
+    this.weaponModelById.clear();
     this.visualEffects = scenario.visualEffects ?? null;
     this.debugExplosionFallbackPosition = this.getScenarioDebugExplosionPosition(scenario);
 
@@ -211,6 +220,9 @@ export class MapRenderer {
     this.explosionRenderer.reset();
     this.cancelDebugExplosionLoop();
     this.visualEffects = null;
+    this.entityModelById.clear();
+    this.entityHeadingById.clear();
+    this.weaponModelById.clear();
     this.staticDetectionIds.clear();
     this.debugExplosionFallbackPosition = null;
   }
@@ -281,10 +293,6 @@ export class MapRenderer {
     scenario.forces.forEach((force) => {
       const colors = FORCE_COLORS[force.side];
       force.entities.forEach((entity) => {
-        // 使用新的 3D 模型替代简单几何图形
-        const shapeCanvas = getEntity3DModelCanvas(entity.type, force.side, 'deployed');
-        const imageUrl = shapeCanvas.toDataURL('image/png');
-
         // 空中力量高度兜底：如果 AI 生成了 altitude=0，用 PLATFORM_META.defaultAltitude
         const meta = PLATFORM_META[entity.type];
         const isAir = meta?.category === 'air';
@@ -303,6 +311,48 @@ export class MapRenderer {
         // 转换公式: cesiumRotation = -(heading - 90) * PI/180
         const heading = entity.position.heading ?? 0;
         const rotation = Cesium.Math.toRadians(-(heading - 90));
+        const modelConfig = resolveVisualModel(entity.visualModel, entity.type);
+
+        if (modelConfig) {
+          const cesiumEntity = this.viewer.entities.add({
+            id: entity.id,
+            name: entity.name,
+            position: Cesium.Cartesian3.fromDegrees(
+              entity.position.longitude,
+              entity.position.latitude,
+              renderAltitude + modelConfig.heightOffsetMeters,
+            ),
+            orientation: this.createHeadingOrientation(
+              entity.position.longitude,
+              entity.position.latitude,
+              renderAltitude,
+              heading + modelConfig.headingOffsetDeg,
+              modelConfig.pitchOffsetDeg,
+              modelConfig.rollOffsetDeg,
+            ),
+            model: {
+              uri: modelConfig.uri,
+              scale: modelConfig.scale,
+              minimumPixelSize: modelConfig.minimumPixelSize,
+              ...(modelConfig.maximumScale !== undefined ? { maximumScale: modelConfig.maximumScale } : {}),
+              heightReference: heightRef,
+            },
+            label: this.createEntityLabel(entity, 42, heightRef),
+          });
+          (cesiumEntity as any).__tacticalLayer = true;
+          (cesiumEntity as any).__originalColor = colors.primary;
+          (cesiumEntity as any).__side = force.side;
+          (cesiumEntity as any).__entityType = entity.type;
+          (cesiumEntity as any).__visualModel = modelConfig;
+          this.entityIdSet.add(entity.id);
+          this.entityModelById.set(entity.id, modelConfig);
+          this.entityHeadingById.set(entity.id, heading);
+          return;
+        }
+
+        // 没有可用 glb 时保留 canvas 图标兜底
+        const shapeCanvas = getEntity3DModelCanvas(entity.type, force.side, 'deployed');
+        const imageUrl = shapeCanvas.toDataURL('image/png');
 
         const cesiumEntity = this.viewer.entities.add({
           id: entity.id,
@@ -322,25 +372,52 @@ export class MapRenderer {
             rotation: rotation,  // 图标旋转
             alignedAxis: Cesium.Cartesian3.UNIT_Z,  // 绕 Z 轴旋转
           },
-          label: {
-            text: entity.name,
-            fillColor: Cesium.Color.WHITE,
-            font: '13px sans-serif',
-            pixelOffset: new Cesium.Cartesian2(0, -(shapeCanvas.height / 2) - 6),
-            heightReference: heightRef,
-            scale: 0.8,
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 2,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          },
+          label: this.createEntityLabel(entity, shapeCanvas.height, heightRef),
         });
         (cesiumEntity as any).__tacticalLayer = true;
         (cesiumEntity as any).__originalColor = colors.primary;
         (cesiumEntity as any).__side = force.side;
         (cesiumEntity as any).__entityType = entity.type;
         this.entityIdSet.add(entity.id);
+        this.entityHeadingById.set(entity.id, heading);
       });
     });
+  }
+
+  private createEntityLabel(
+    entity: Pick<EntitySpec, 'name'>,
+    visualHeight: number,
+    heightReference: Cesium.HeightReference,
+  ): Cesium.LabelGraphics.ConstructorOptions {
+    return {
+      text: entity.name,
+      fillColor: Cesium.Color.WHITE,
+      font: '13px sans-serif',
+      pixelOffset: new Cesium.Cartesian2(0, -(visualHeight / 2) - 6),
+      heightReference,
+      scale: 0.8,
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 2,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+    };
+  }
+
+  private createHeadingOrientation(
+    longitude: number,
+    latitude: number,
+    altitude: number,
+    headingDeg: number,
+    pitchDeg = 0,
+    rollDeg = 0,
+  ): Cesium.Quaternion {
+    return Cesium.Transforms.headingPitchRollQuaternion(
+      Cesium.Cartesian3.fromDegrees(longitude, latitude, altitude),
+      new Cesium.HeadingPitchRoll(
+        Cesium.Math.toRadians(headingDeg),
+        Cesium.Math.toRadians(pitchDeg),
+        Cesium.Math.toRadians(rollDeg),
+      ),
+    );
   }
 
   /**
@@ -438,7 +515,13 @@ export class MapRenderer {
 
     weapons.forEach((weapon) => {
       activeIds.add(weapon.id);
-      const positions = weapon.trajectory.map((point) =>
+      const weaponModel = this.resolveRuntimeWeaponModel(weapon);
+      const trailPoints = buildRuntimeWeaponTrail({
+        trajectory: weapon.trajectory,
+        currentPosition: weapon.currentPosition,
+        samplesPerSegment: 10,
+      });
+      const positions = trailPoints.map((point) =>
         Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, point.altitude)
       );
       const missilePosition = Cesium.Cartesian3.fromDegrees(
@@ -450,20 +533,38 @@ export class MapRenderer {
 
       if (existingMissile) {
         (existingMissile as any).position = missilePosition;
+        if (weaponModel) {
+          (existingMissile as any).orientation = this.createWeaponOrientation(weapon, weaponModel);
+        }
       } else {
-        const missileEntity = this.viewer.entities.add({
-          id: weapon.id,
-          name: weapon.spec.name,
-          position: missilePosition,
-          point: {
-            pixelSize: 9,
-            color: Cesium.Color.fromCssColorString('#f8fafc'),
-            outlineColor: Cesium.Color.fromCssColorString('#f97316'),
-            outlineWidth: 2,
-            heightReference: Cesium.HeightReference.NONE,
-          },
-        });
+        const missileEntity = weaponModel
+          ? this.viewer.entities.add({
+              id: weapon.id,
+              name: weapon.spec.name,
+              position: missilePosition,
+              orientation: this.createWeaponOrientation(weapon, weaponModel),
+              model: {
+                uri: weaponModel.uri,
+                scale: weaponModel.scale,
+                minimumPixelSize: weaponModel.minimumPixelSize,
+                ...(weaponModel.maximumScale !== undefined ? { maximumScale: weaponModel.maximumScale } : {}),
+                heightReference: Cesium.HeightReference.NONE,
+              },
+            })
+          : this.viewer.entities.add({
+              id: weapon.id,
+              name: weapon.spec.name,
+              position: missilePosition,
+              point: {
+                pixelSize: 9,
+                color: Cesium.Color.fromCssColorString('#f8fafc'),
+                outlineColor: Cesium.Color.fromCssColorString('#f97316'),
+                outlineWidth: 2,
+                heightReference: Cesium.HeightReference.NONE,
+              },
+            });
         (missileEntity as any).__tacticalLayer = true;
+        if (weaponModel) this.weaponModelById.set(weapon.id, weaponModel);
       }
 
       const trailId = `${weapon.id}-trail`;
@@ -495,9 +596,69 @@ export class MapRenderer {
       this.viewer.entities.removeById(weaponId);
       this.viewer.entities.removeById(`${weaponId}-trail`);
       this.weaponIds.delete(weaponId);
+      this.weaponModelById.delete(weaponId);
     }
 
     weapons.forEach((weapon) => this.weaponIds.add(weapon.id));
+  }
+
+  private resolveRuntimeWeaponModel(weapon: Weapon): ResolvedVisualModel | null {
+    const cached = this.weaponModelById.get(weapon.id);
+    if (cached) return cached;
+
+    const effect = this.visualEffects?.weaponEffects.items.find(item => item.weaponId === weapon.spec.id);
+    const resolved = resolveWeaponVisualModel(effect?.visualModel);
+    if (resolved) this.weaponModelById.set(weapon.id, resolved);
+    return resolved;
+  }
+
+  private createWeaponOrientation(
+    weapon: Weapon,
+    model: ResolvedVisualModel,
+  ): Cesium.Quaternion {
+    const previousPoint = weapon.trajectory.length >= 2
+      ? weapon.trajectory[weapon.trajectory.length - 2]
+      : weapon.launchPosition;
+    const headingDeg = this.computeHeadingDegrees(previousPoint, weapon.currentPosition);
+    const horizontalMeters = this.distanceMeters2D(previousPoint, weapon.currentPosition);
+    const verticalMeters = weapon.currentPosition.altitude - previousPoint.altitude;
+    const pitchDeg = horizontalMeters > 0
+      ? Cesium.Math.toDegrees(Math.atan2(verticalMeters, horizontalMeters))
+      : 0;
+
+    return Cesium.Transforms.headingPitchRollQuaternion(
+      Cesium.Cartesian3.fromDegrees(
+        weapon.currentPosition.longitude,
+        weapon.currentPosition.latitude,
+        weapon.currentPosition.altitude,
+      ),
+      new Cesium.HeadingPitchRoll(
+        Cesium.Math.toRadians(headingDeg + model.headingOffsetDeg),
+        Cesium.Math.toRadians(pitchDeg + model.pitchOffsetDeg),
+        Cesium.Math.toRadians(model.rollOffsetDeg),
+      ),
+    );
+  }
+
+  private computeHeadingDegrees(from: GeoPosition, to: GeoPosition): number {
+    const lat1 = Cesium.Math.toRadians(from.latitude);
+    const lat2 = Cesium.Math.toRadians(to.latitude);
+    const dLon = Cesium.Math.toRadians(to.longitude - from.longitude);
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2)
+      - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    return (Cesium.Math.toDegrees(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  private distanceMeters2D(from: GeoPosition, to: GeoPosition): number {
+    const earthRadius = 6_371_000;
+    const lat1 = Cesium.Math.toRadians(from.latitude);
+    const lat2 = Cesium.Math.toRadians(to.latitude);
+    const dLat = Cesium.Math.toRadians(to.latitude - from.latitude);
+    const dLon = Cesium.Math.toRadians(to.longitude - from.longitude);
+    const h = Math.sin(dLat / 2) ** 2
+      + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return earthRadius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
   }
 
   private renderRuntimeEmitters(
@@ -919,6 +1080,12 @@ export class MapRenderer {
   private clearRuntimeVisuals(): void {
     this.emitterIds.forEach(id => this.removeRuntimeEmitterById(id));
     this.emitterIds.clear();
+    this.weaponIds.forEach((weaponId) => {
+      this.viewer.entities.removeById(weaponId);
+      this.viewer.entities.removeById(`${weaponId}-trail`);
+    });
+    this.weaponIds.clear();
+    this.weaponModelById.clear();
     this.setStaticDetectionVisible(true);
   }
 
@@ -1044,16 +1211,31 @@ export class MapRenderer {
   updateEntityPosition(entityId: string, position: GeoPosition): void {
     const cesiumEntity = this.viewer.entities.getById(entityId);
     if (cesiumEntity) {
+      const modelConfig = this.entityModelById.get(entityId);
       (cesiumEntity as any).position = Cesium.Cartesian3.fromDegrees(
         position.longitude,
         position.latitude,
-        position.altitude
+        position.altitude + (modelConfig?.heightOffsetMeters ?? 0),
       );
+
+      if (modelConfig) {
+        const heading = position.heading ?? this.entityHeadingById.get(entityId) ?? 0;
+        (cesiumEntity as any).orientation = this.createHeadingOrientation(
+          position.longitude,
+          position.latitude,
+          position.altitude,
+          heading + modelConfig.headingOffsetDeg,
+          modelConfig.pitchOffsetDeg,
+          modelConfig.rollOffsetDeg,
+        );
+        this.entityHeadingById.set(entityId, heading);
+      }
 
       // 如果有航向信息，更新图标旋转
       if (position.heading !== undefined && cesiumEntity.billboard) {
         const rotation = Cesium.Math.toRadians(-(position.heading - 90));
         (cesiumEntity.billboard as any).rotation = rotation;
+        this.entityHeadingById.set(entityId, position.heading);
       }
     }
   }
@@ -1067,6 +1249,11 @@ export class MapRenderer {
 
     const entityType = (cesiumEntity as any).__entityType as PlatformType;
     if (!entityType) return;
+
+    if (cesiumEntity.model) {
+      (cesiumEntity as any).show = status !== 'destroyed';
+      return;
+    }
 
     // 使用新的 3D 模型
     const shapeCanvas = getEntity3DModelCanvas(entityType, side, status);

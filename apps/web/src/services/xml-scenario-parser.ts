@@ -41,6 +41,9 @@ import type {
   ExplosionEffectConfig,
   ElectronicWarfareEffectsConfig,
   RadarTrackingConfig,
+  WeaponTrajectoryPointRole,
+  VisualModelConfig,
+  VisualModelAlias,
 } from '../types/tactical-scenario';
 import type { PlatformType, ForceSide } from '../types/tactical-scenario';
 import { keplerianToGeodetic } from './orbit-calculator';
@@ -67,6 +70,63 @@ function getAttrFloat(el: Element | null | undefined, attr: string): number {
 
 function getAttrText(el: Element | null | undefined, attr: string): string {
   return el?.getAttribute(attr)?.trim() ?? '';
+}
+
+function parseOptionalAttrFloat(el: Element | null | undefined, attr: string): number | undefined {
+  const text = getAttrText(el, attr);
+  if (!text) return undefined;
+  const value = parseFloat(text);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function isVisualModelAlias(value: string | null | undefined): value is VisualModelAlias {
+  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+}
+
+function parseVisualModelConfig(el: Element | null | undefined): VisualModelConfig | undefined {
+  if (!el) return undefined;
+
+  const alias = getAttrText(el, 'alias') || getAttrText(el, 'modelAlias');
+  const uri = getAttrText(el, 'uri') || getAttrText(el, 'modelUri');
+  const scale = parseOptionalAttrFloat(el, 'scale') ?? parseOptionalAttrFloat(el, 'modelScale');
+  const minimumPixelSize = parseOptionalAttrFloat(el, 'minimumPixelSize')
+    ?? parseOptionalAttrFloat(el, 'modelMinimumPixelSize');
+  const maximumScale = parseOptionalAttrFloat(el, 'maximumScale')
+    ?? parseOptionalAttrFloat(el, 'modelMaximumScale');
+  const headingOffsetDeg = parseOptionalAttrFloat(el, 'headingOffsetDeg')
+    ?? parseOptionalAttrFloat(el, 'modelHeadingOffsetDeg');
+  const pitchOffsetDeg = parseOptionalAttrFloat(el, 'pitchOffsetDeg')
+    ?? parseOptionalAttrFloat(el, 'modelPitchOffsetDeg');
+  const rollOffsetDeg = parseOptionalAttrFloat(el, 'rollOffsetDeg')
+    ?? parseOptionalAttrFloat(el, 'modelRollOffsetDeg');
+  const heightOffsetMeters = parseOptionalAttrFloat(el, 'heightOffsetMeters')
+    ?? parseOptionalAttrFloat(el, 'modelHeightOffsetMeters');
+
+  if (
+    !alias
+    && !uri
+    && scale === undefined
+    && minimumPixelSize === undefined
+    && maximumScale === undefined
+    && headingOffsetDeg === undefined
+    && pitchOffsetDeg === undefined
+    && rollOffsetDeg === undefined
+    && heightOffsetMeters === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(isVisualModelAlias(alias) ? { alias } : {}),
+    ...(uri ? { uri } : {}),
+    ...(scale !== undefined ? { scale } : {}),
+    ...(minimumPixelSize !== undefined ? { minimumPixelSize } : {}),
+    ...(maximumScale !== undefined ? { maximumScale } : {}),
+    ...(headingOffsetDeg !== undefined ? { headingOffsetDeg } : {}),
+    ...(pitchOffsetDeg !== undefined ? { pitchOffsetDeg } : {}),
+    ...(rollOffsetDeg !== undefined ? { rollOffsetDeg } : {}),
+    ...(heightOffsetMeters !== undefined ? { heightOffsetMeters } : {}),
+  };
 }
 
 function parseParams(el: Element | null | undefined): ComponentParam[] {
@@ -245,6 +305,7 @@ function parseEquipments(doc: Document, tag: 'Participating' | 'Supporting'): En
       position: parsePosition(eq),
       modelId,
       modelType: getText(eq, 'ModelType') || undefined,
+      visualModel: parseVisualModelConfig(eq.querySelector(':scope > VisualModel')),
       interfaceProtocol: getText(eq, 'InterfaceProtocol') || undefined,
       federateName: getText(eq, 'FederateName') || undefined,
       components,
@@ -491,13 +552,17 @@ function parseVisualEffects(doc: Document): VisualEffectsConfig | undefined {
 
   const weaponItems: WeaponEffectConfig[] = Array.from(
     effectsEl.querySelectorAll(':scope > WeaponEffects > WeaponEffect')
-  ).map(effectEl => ({
-    weaponId: getAttrText(effectEl, 'weaponId') || getAttrText(effectEl, 'id'),
-    trailEnabled: getAttrText(effectEl, 'trailEnabled') !== 'false',
-    trailColor: getAttrText(effectEl, 'trailColor') || '#ffd24a',
-    trailWidth: getAttrFloat(effectEl, 'trailWidth') || 3,
-    iconStyle: (getAttrText(effectEl, 'iconStyle') || 'missile') as WeaponEffectConfig['iconStyle'],
-  })).filter(effect => effect.weaponId);
+  ).map(effectEl => {
+    const visualModel = parseVisualModelConfig(effectEl);
+    return {
+      weaponId: getAttrText(effectEl, 'weaponId') || getAttrText(effectEl, 'id'),
+      trailEnabled: getAttrText(effectEl, 'trailEnabled') !== 'false',
+      trailColor: getAttrText(effectEl, 'trailColor') || '#ffd24a',
+      trailWidth: getAttrFloat(effectEl, 'trailWidth') || 3,
+      iconStyle: (getAttrText(effectEl, 'iconStyle') || 'missile') as WeaponEffectConfig['iconStyle'],
+      ...(visualModel ? { visualModel } : {}),
+    };
+  }).filter(effect => effect.weaponId);
 
   const explosionItems: ExplosionEffectConfig[] = Array.from(
     effectsEl.querySelectorAll(':scope > ExplosionEffects > ExplosionEffect')
@@ -632,6 +697,15 @@ function isTacticalEventType(value: string | null | undefined): value is Tactica
     || value === 'destruction'
     || value === 'weapon-launch'
     || value === 'weapon-impact';
+}
+
+function isWeaponTrajectoryPointRole(value: string | null | undefined): value is WeaponTrajectoryPointRole {
+  return value === 'launch'
+    || value === 'boost'
+    || value === 'cruise'
+    || value === 'terminal'
+    || value === 'impact'
+    || value === 'custom';
 }
 
 function getAllEntities(forces: TacticalScenario['forces']): EntitySpec[] {
@@ -801,6 +875,7 @@ function parseStrikeTasks(doc: Document, forces: TacticalScenario['forces']): St
       const attackerEntityId = getAttrText(taskEl, 'attackerEntityId') || getAttrText(taskEl, 'attacker');
       const targetEntityId = getAttrText(taskEl, 'targetEntityId') || getAttrText(taskEl, 'target');
       if (!findEntity(forces, attackerEntityId) || !findEntity(forces, targetEntityId)) return null;
+      const weaponTrajectory = parseWeaponTrajectory(taskEl);
 
       return {
         id: getAttrText(taskEl, 'id') || `strike-${attackerEntityId}-${targetEntityId}`,
@@ -809,9 +884,45 @@ function parseStrikeTasks(doc: Document, forces: TacticalScenario['forces']): St
         phaseId: getAttrText(taskEl, 'phaseId') || getText(taskEl, 'PhaseId'),
         timestamp: getAttrFloat(taskEl, 'timestamp') || getFloat(taskEl, 'Timestamp'),
         detail: getAttrText(taskEl, 'detail') || getText(taskEl, 'Detail') || '打击任务',
+        ...(weaponTrajectory ? { weaponTrajectory } : {}),
       };
     })
     .filter((task): task is StrikeTask => task !== null);
+}
+
+function parseWeaponTrajectory(taskEl: Element): StrikeTask['weaponTrajectory'] | undefined {
+  const trajectoryEl = taskEl.querySelector(':scope > WeaponTrajectory');
+  if (!trajectoryEl) return undefined;
+
+  const pointEls = Array.from(trajectoryEl.querySelectorAll(':scope > TrajectoryPoint'));
+  const points = pointEls
+    .map((pointEl, index) => {
+      const longitude = getAttrFloat(pointEl, 'longitude');
+      const latitude = getAttrFloat(pointEl, 'latitude');
+      const progressAttr = getAttrText(pointEl, 'progress');
+      const roleAttr = getAttrText(pointEl, 'role');
+      return {
+        ...(getAttrText(pointEl, 'id') ? { id: getAttrText(pointEl, 'id') } : {}),
+        ...(isWeaponTrajectoryPointRole(roleAttr) ? { role: roleAttr } : {}),
+        progress: progressAttr
+          ? Math.max(0, Math.min(1, getAttrFloat(pointEl, 'progress')))
+          : (pointEls.length <= 1 ? 0 : index / (pointEls.length - 1)),
+        position: {
+          longitude,
+          latitude,
+          altitude: getAttrFloat(pointEl, 'altitude'),
+        },
+      };
+    })
+    .filter(point => Number.isFinite(point.position.longitude) && Number.isFinite(point.position.latitude));
+
+  if (points.length < 2) return undefined;
+
+  return {
+    mode: getAttrText(trajectoryEl, 'mode') === 'typed' ? 'typed' : 'manual',
+    interpolation: getAttrText(trajectoryEl, 'interpolation') === 'linear' ? 'linear' : 'catmull-rom',
+    points,
+  };
 }
 
 function parsePhases(doc: Document, forces: TacticalScenario['forces']): Phase[] {

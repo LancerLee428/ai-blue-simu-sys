@@ -34,6 +34,43 @@ export interface GeoPosition {
   orbit?: OrbitState;  // 轨道参数（航天装备使用）
 }
 
+export type WeaponGuidanceImpact =
+  | 'none'
+  | 'tracking-noise'
+  | 'terminal-deviation'
+  | 'lock-break';
+
+export interface WeaponInterferenceState {
+  weaponId: string;
+  jammerId: string;
+  strength: number;
+  guidanceImpact: WeaponGuidanceImpact;
+  lateralOffsetMeters: number;
+  verticalOffsetMeters: number;
+  hitProbabilityScale: number;
+}
+
+export type WeaponTrajectoryPointRole =
+  | 'launch'
+  | 'boost'
+  | 'cruise'
+  | 'terminal'
+  | 'impact'
+  | 'custom';
+
+export interface WeaponTrajectoryKeyPoint {
+  id?: string;
+  role?: WeaponTrajectoryPointRole;
+  progress?: number;
+  position: GeoPosition;
+}
+
+export interface WeaponTrajectoryPlan {
+  mode?: 'manual' | 'typed';
+  interpolation?: 'linear' | 'catmull-rom';
+  points: WeaponTrajectoryKeyPoint[];
+}
+
 // ---------------------------------------------------------------------------
 // XML 想定扩展类型
 // ---------------------------------------------------------------------------
@@ -208,6 +245,7 @@ export interface WeaponEffectConfig {
   trailColor: string;
   trailWidth: number;
   iconStyle: 'missile' | 'anti-ship' | 'bomb' | 'rocket';
+  visualModel?: VisualModelConfig;
 }
 
 export interface ExplosionEffectConfig {
@@ -281,6 +319,26 @@ export interface VisualEffectsConfig {
   electronicWarfareEffects?: ElectronicWarfareEffectsConfig;
   weaponRuntime?: WeaponRuntimeConfig;
   performance?: VisualEffectsPerformanceConfig;
+}
+
+export type VisualModelAlias = 'fj' | 'jt' | 'dd' | 'ld';
+
+export interface VisualModelConfig {
+  /**
+   * 模型别名。内置约定：fj=飞机、jt=舰艇、dd=导弹、ld=雷达。
+   */
+  alias?: VisualModelAlias;
+  /**
+   * 模型资源地址。支持 XML 直接写入 fj/ZDJ_01_v3.glb 这类相对路径，也支持完整 URL。
+   */
+  uri?: string;
+  scale?: number;
+  minimumPixelSize?: number;
+  maximumScale?: number;
+  headingOffsetDeg?: number;
+  pitchOffsetDeg?: number;
+  rollOffsetDeg?: number;
+  heightOffsetMeters?: number;
 }
 
 export type EmitterKind = 'radar' | 'electronic-jamming';
@@ -577,6 +635,7 @@ export interface TacticalEvent {
   sourceEntityId: string;
   targetEntityId?: string;
   detail: string;              // 人类可读描述
+  weaponTrajectory?: WeaponTrajectoryPlan;
 }
 
 /**
@@ -669,6 +728,8 @@ export interface Weapon {
   status: WeaponStatus;
   trajectory: GeoPosition[];
   fuelRemaining: number;
+  interference?: WeaponInterferenceState;
+  adjustedTargetPosition?: GeoPosition;
 }
 
 export interface WeaponLaunchEvent extends TacticalEvent {
@@ -743,6 +804,7 @@ export interface EntitySpec {
   // XML 扩展字段
   modelId?: string;
   modelType?: string;
+  visualModel?: VisualModelConfig;
   interfaceProtocol?: string;
   federateName?: string;
   components?: EquipmentComponent[];
@@ -789,6 +851,7 @@ export interface StrikeTask {
   phaseId: string;
   timestamp: number;
   detail: string;
+  weaponTrajectory?: WeaponTrajectoryPlan;
 }
 
 /**

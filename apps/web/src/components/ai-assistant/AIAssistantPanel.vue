@@ -4,6 +4,7 @@ import { ref, watch, nextTick } from 'vue';
 import { useTacticalScenarioStore } from '../../stores/tactical-scenario';
 import { XmlScenarioParser } from '../../services/xml-scenario-parser';
 import { XmlScenarioExporter } from '../../services/xml-scenario-exporter';
+import { createScenarioXmlCopyExport } from '../../services/scenario-copy-exporter';
 import { normalizeTacticalScenario } from '../../services/tactical-scenario-normalizer';
 import type { TacticalScenario } from '../../types/tactical-scenario';
 import PhaseTimeline from './PhaseTimeline.vue';
@@ -89,17 +90,11 @@ function handleExportXml() {
   const scenario = store.currentScenario;
   if (!scenario) return;
   try {
-    const xmlContent = xmlExporter.export(scenario);
-    const blob = new Blob([xmlContent], { type: 'application/xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const name = scenario.scenarioMetadata?.name ?? scenario.id;
-    a.download = `${name}-${Date.now()}.xml`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const copy = createScenarioXmlCopyExport(scenario, new Date(), xmlExporter);
+    downloadTextFile(copy.content, copy.fileName, 'application/xml');
+    store.markScenarioSaved(`XML 副本已保存：${copy.fileName}`);
   } catch (err) {
-    store.error = `XML 导出失败: ${err instanceof Error ? err.message : String(err)}`;
+    store.error = `XML 副本保存失败: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -109,17 +104,21 @@ function handleExportJson() {
   if (!scenario) return;
   try {
     const jsonContent = JSON.stringify(scenario, null, 2);
-    const blob = new Blob([jsonContent], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const name = scenario.scenarioMetadata?.name ?? scenario.id;
-    a.download = `${name}-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile(jsonContent, `${name}-${Date.now()}.json`, 'application/json');
   } catch (err) {
     store.error = `JSON 导出失败: ${err instanceof Error ? err.message : String(err)}`;
   }
+}
+
+function downloadTextFile(content: string, fileName: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /**
@@ -234,11 +233,12 @@ function stripJsonFromContent(content: string): string {
         📥 导入
       </button>
       <button
-        class="action-btn action-btn-secondary"
+        class="action-btn"
+        :class="store.hasUnsavedScenarioEdit ? 'action-btn-primary' : 'action-btn-secondary'"
         :disabled="!store.currentScenario"
         @click="handleExportXml"
       >
-        📤 导出 XML
+        {{ store.hasUnsavedScenarioEdit ? '💾 保存副本*' : '💾 保存副本' }}
       </button>
       <button
         class="action-btn action-btn-secondary"

@@ -17,6 +17,7 @@ import DecisionPanel from '../components/simulation/DecisionPanel.vue';
 import SimulationDrawer from '../components/simulation/SimulationDrawer.vue';
 import { MapRenderer } from '../services/map-renderer';
 import { ExecutionEngine } from '../services/execution-engine';
+import { moveScenarioEntityWithLinkedGeometry } from '../services/scenario-edit-service';
 import { useTacticalScenarioStore } from '../stores/tactical-scenario';
 import { useActionPlanStore } from '../stores/action-plan';
 import { usePanelState } from '../composables/usePanelState';
@@ -314,6 +315,29 @@ function handleUpdateEntityPosition(payload: {
   id: string;
   position: { longitude: number; latitude: number };
 }) {
+  const scenario = actionPlanStore.activePlan?.scenario ?? tacticalStore.currentScenario;
+  if (scenario) {
+    const entity = scenario.forces
+      .flatMap(force => force.entities)
+      .find(item => item.id === payload.id);
+
+    if (entity) {
+      const nextScenario = moveScenarioEntityWithLinkedGeometry(
+        scenario,
+        payload.id,
+        {
+          longitude: payload.position.longitude,
+          latitude: payload.position.latitude,
+          altitude: entity.position.altitude,
+        },
+      );
+      loadedRuntimePlanId.value = null;
+      tacticalStore.applyScenarioEdit(nextScenario, `实体 ${entity.name} 位置已更新，行动路线和导弹轨迹已同步`);
+      syncExecutionStateFromEngine();
+      return;
+    }
+  }
+
   // 使用命令系统包装更新操作
   // 这里简化处理，实际应该用 UpdateEntityCommand
   updateEntity(payload.id, {

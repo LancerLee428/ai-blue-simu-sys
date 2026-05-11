@@ -24,6 +24,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   const chatHistory = ref<ChatMessage[]>([]);
   const executionStatus = ref<ExecutionStatus>('idle');
   const currentPhaseIndex = ref(0);
+  const hasUnsavedScenarioEdit = ref(false);
   const isGenerating = ref(false);
   const thinkingChain = ref<string>(''); // 思维链内容
   const error = ref<string | null>(null);
@@ -129,6 +130,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
       }
 
       currentScenario.value = finalScenario;
+      hasUnsavedScenarioEdit.value = false;
 
       // 更新思维链消息
       const msgIndex = chatHistory.value.findIndex(m => m.id === thinkingMsgId);
@@ -185,6 +187,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
       const refined = await service.refineScenario(currentScenario.value, feedback);
 
       currentScenario.value = refined;
+      hasUnsavedScenarioEdit.value = true;
       addAssistantMessage('方案已更新！', refined);
 
       // 渲染到地图并自动定位
@@ -228,6 +231,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     }
     currentPhaseIndex.value = 0;
     currentScenario.value = null;
+    hasUnsavedScenarioEdit.value = false;
     addSystemMessage('地图已清空');
   }
 
@@ -293,6 +297,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   function loadScenario(scenario: TacticalScenario) {
     const normalizedScenario = normalizeTacticalScenario(scenario);
     currentScenario.value = normalizedScenario;
+    hasUnsavedScenarioEdit.value = false;
 
     if (executionEngine && mapRenderer) {
       executionEngine.load(normalizedScenario);
@@ -316,12 +321,40 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     );
   }
 
+  function applyScenarioEdit(nextScenario: TacticalScenario, message = '想定已更新') {
+    const normalizedScenario = normalizeTacticalScenario(nextScenario);
+    currentScenario.value = normalizedScenario;
+    hasUnsavedScenarioEdit.value = true;
+
+    try {
+      const actionPlanStore = useActionPlanStore();
+      if (actionPlanStore.activePlanId) {
+        actionPlanStore.updatePlanScenario(actionPlanStore.activePlanId, normalizedScenario);
+      }
+    } catch (err) {
+      console.error('Failed to update action plan scenario:', err);
+    }
+
+    if (executionEngine && mapRenderer) {
+      executionEngine.load(normalizedScenario);
+      mapRenderer.renderScenario(normalizedScenario);
+    }
+
+    addSystemMessage(message);
+  }
+
+  function markScenarioSaved(message = '想定副本已保存') {
+    hasUnsavedScenarioEdit.value = false;
+    addSystemMessage(message);
+  }
+
   function updateEnvironment(environment: EnvironmentConfig) {
     if (!currentScenario.value) return;
     currentScenario.value = {
       ...currentScenario.value,
       environment,
     };
+    hasUnsavedScenarioEdit.value = true;
     addSystemMessage('环境配置已更新');
   }
 
@@ -349,6 +382,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     chatHistory,
     executionStatus,
     currentPhaseIndex,
+    hasUnsavedScenarioEdit,
     isGenerating,
     thinkingChain,
     error,
@@ -358,6 +392,8 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     refineScenario,
     deployToMap,
     clearMap,
+    applyScenarioEdit,
+    markScenarioSaved,
     play,
     pause,
     nextPhase,

@@ -78,6 +78,14 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
     }
   }
 
+  function updatePlanScenario(planId: string, scenario: TacticalScenario) {
+    const plan = plans.value.find(p => p.id === planId);
+    if (plan) {
+      plan.scenario = scenario;
+      saveToStorage();
+    }
+  }
+
   // 获取当前方案的执行状态
   function getExecutionState(planId: string) {
     const plan = plans.value.find(p => p.id === planId);
@@ -132,6 +140,7 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
     createPlan,
     activatePlan,
     deletePlan,
+    updatePlanScenario,
     updateExecutionState,
     getExecutionState,
   };

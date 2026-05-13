@@ -57,7 +57,7 @@ function isPlatformType(value: unknown): value is PlatformType {
 }
 
 function isVisualModelAlias(value: unknown): value is VisualModelAlias {
-  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld' || value === 'wx';
 }
 
 function isFormationRoleMarker(value: unknown): value is FormationRoleMarker {

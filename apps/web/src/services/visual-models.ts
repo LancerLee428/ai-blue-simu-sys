@@ -9,6 +9,7 @@ const missileModelUrl = new URL('../assets/3d-model/dd/XHDD_01.glb', import.meta
 const aircraftModelUrl = new URL('../assets/3d-model/fj/ZDJ_01_v3.glb', import.meta.url).href;
 const shipModelUrl = new URL('../assets/3d-model/jt/SMJT_01.glb', import.meta.url).href;
 const radarModelUrl = new URL('../assets/3d-model/ld/ld_01.glb', import.meta.url).href;
+const satelliteModelUrl = new URL('../assets/3d-model/wx/WX_01_03.glb', import.meta.url).href;
 
 export interface ResolvedVisualModel extends Required<Pick<VisualModelConfig, 'uri'>> {
   alias?: VisualModelAlias;
@@ -62,6 +63,16 @@ const DEFAULT_BY_ALIAS: Record<VisualModelAlias, ResolvedVisualModel> = {
     rollOffsetDeg: 0,
     heightOffsetMeters: 0,
   },
+  wx: {
+    alias: 'wx',
+    uri: satelliteModelUrl,
+    scale: 0.04,
+    minimumPixelSize: 72,
+    headingOffsetDeg: 0,
+    pitchOffsetDeg: 0,
+    rollOffsetDeg: 0,
+    heightOffsetMeters: 0,
+  },
 };
 
 const BUNDLED_MODEL_URI_BY_XML_PATH: Record<string, string> = {
@@ -69,10 +80,11 @@ const BUNDLED_MODEL_URI_BY_XML_PATH: Record<string, string> = {
   'jt/SMJT_01.glb': shipModelUrl,
   'dd/XHDD_01.glb': missileModelUrl,
   'ld/ld_01.glb': radarModelUrl,
+  'wx/WX_01_03.glb': satelliteModelUrl,
 };
 
 function isVisualModelAlias(value: unknown): value is VisualModelAlias {
-  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld' || value === 'wx';
 }
 
 function normalizeNumber(value: unknown, fallback: number): number {
@@ -85,6 +97,7 @@ function resolveModelUri(uri: string, defaults: ResolvedVisualModel | undefined)
 }
 
 export function getDefaultEntityVisualModel(type: PlatformType): VisualModelConfig | null {
+  if (type === 'space-satellite') return { alias: 'wx' };
   const meta = PLATFORM_META[type];
   if (meta?.category === 'air') return { alias: 'fj' };
   if (meta?.category === 'naval') return { alias: 'jt' };

@@ -64,6 +64,7 @@ export const ENTITY_SIZES: Record<string, number> = {
   'uav-strike': 10,
   'uav-recon': 8,
   'uav-swarm': 10,
+  'space-satellite': 12,
   'ship-carrier': 22,
   'ship-destroyer': 16,
   'ship-frigate': 14,

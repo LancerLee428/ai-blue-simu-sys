@@ -81,7 +81,7 @@ function parseOptionalAttrFloat(el: Element | null | undefined, attr: string): n
 }
 
 function isVisualModelAlias(value: string | null | undefined): value is VisualModelAlias {
-  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld' || value === 'wx';
 }
 
 function isFormationRoleMarker(value: string | null | undefined): value is FormationRoleMarker {
@@ -293,9 +293,11 @@ function inferPlatformType(equipmentName: string, components: EquipmentComponent
   if (/(预警机|aew|e-2c)/i.test(haystack)) return 'air-aew';
   if (/(无人机|uav|攻击-11)/i.test(haystack)) return 'uav-strike';
   if (/(战斗机|fighter|歼-16|f-15)/i.test(haystack)) return 'air-fighter';
+  if (/(飞机|air_mover|航空机动)/i.test(haystack)) return 'air-fighter';
   if (/(坦克|tank|99a)/i.test(haystack)) return 'ground-tank';
   if (/(自行火炮|spg|plz)/i.test(haystack)) return 'ground-spg';
   if (/(防空|sam|爱国者|hq-9|红旗)/i.test(haystack)) return 'ground-sam';
+  if (/(卫星|satellite|space-satellite|space_mover)/i.test(haystack)) return 'space-satellite';
   if (/(雷达|radar|tpy)/i.test(haystack)) return 'ground-radar';
   if (/(sat|recon|dut)/i.test(haystack)) return 'uav-recon';
   if (/(ground|station)/i.test(haystack)) return 'facility-radar';

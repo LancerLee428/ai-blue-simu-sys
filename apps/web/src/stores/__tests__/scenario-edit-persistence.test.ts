@@ -119,3 +119,25 @@ test('markScenarioSaved should persist the current edited scenario to action pla
   assert.equal(getStoredScenario().forces[0].entities[0].position.longitude, 122);
   assert.equal(tacticalStore.hasUnsavedScenarioEdit, false);
 });
+
+test('createOrReplacePlan should reuse a stable plan id and clear stale drafts', () => {
+  globalThis.localStorage = new MemoryStorage() as unknown as Storage;
+  setActivePinia(createPinia());
+
+  const actionPlanStore = useActionPlanStore();
+
+  const first = createScenario(121);
+  const edited = createScenario(122);
+  const second = createScenario(123);
+  const plan = actionPlanStore.createOrReplacePlan('plan-auto-demo', first, '自动演示方案');
+
+  actionPlanStore.updateActivePlanScenarioInMemory(edited);
+  const replaced = actionPlanStore.createOrReplacePlan('plan-auto-demo', second, '自动演示方案');
+
+  assert.equal(plan.id, 'plan-auto-demo');
+  assert.equal(replaced.id, 'plan-auto-demo');
+  assert.equal(actionPlanStore.plans.length, 1);
+  assert.equal(actionPlanStore.activePlanId, 'plan-auto-demo');
+  assert.equal(actionPlanStore.activePlan?.scenario.forces[0].entities[0].position.longitude, 123);
+  assert.equal(getStoredScenario().forces[0].entities[0].position.longitude, 123);
+});

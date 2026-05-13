@@ -403,17 +403,19 @@ test('ExecutionEngine should keep fixed radar and EW entities at deployed positi
   });
 });
 
-test('Example XML should drive radar 8-01 and radar 9-01 tracking sources plus aircraft standoff and missile launches', () => {
+test('Example XML should drive two radar tracking sources, one EW beam, and missile intercept launches', () => {
   globalThis.DOMParser = TestDOMParser as any;
-  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+  const xml = readFileSync('data-example/东海-动态推演-0513.xml', 'utf8');
   const scenario = normalizeTacticalScenario(new XmlScenarioParser().parse(xml));
   const engine = createEngineWithScenario(scenario);
   const blueMissiles = [
-    createBlueWeapon('blue-runtime-missile-1', 104.07, 30.65),
-    createBlueWeapon('blue-runtime-missile-2', 113.66, 34.72),
+    createBlueWeapon('blue-runtime-korea-1', 117.5, 39.4),
+    createBlueWeapon('blue-runtime-okinawa-1', 126.5, 43.7),
+    createBlueWeapon('blue-runtime-hawaii-1', 121.1, 37.4),
   ];
-  (blueMissiles[0] as any).launcherId = 'blue-g01-missile2-01';
-  (blueMissiles[1] as any).launcherId = 'blue-g02-missile3-01';
+  (blueMissiles[0] as any).launcherId = 'blue-g03-missile-01';
+  (blueMissiles[1] as any).launcherId = 'blue-g02-missile-01';
+  (blueMissiles[2] as any).launcherId = 'blue-g05-missile-01';
   (engine as any).lastRuntimeWeapons = blueMissiles;
 
   const radarEmitters = callPrivateEmitterFactory(engine, 'createSensorEmitters');
@@ -421,23 +423,38 @@ test('Example XML should drive radar 8-01 and radar 9-01 tracking sources plus a
   const attackEvents = scenario.phases.flatMap(phase => phase.events).filter(event => event.type === 'attack');
 
   assert.deepEqual(new Set(radarEmitters.map(emitter => emitter.sourceEntityId)), new Set([
-    'red-g08-radar-01',
-    'red-g09-radar-01',
+    'red-g01-radar-01',
+    'red-g03-radar-01',
   ]));
-  assert.ok(radarEmitters.filter(emitter => emitter.sourceEntityId === 'red-g08-radar-01').length > 1);
-  assert.ok(radarEmitters.filter(emitter => emitter.sourceEntityId === 'red-g09-radar-01').length > 1);
-  assert.deepEqual(new Set(ewEmitters.map(emitter => emitter.sourceEntityId)), new Set([
-    'red-g08-radar-01',
-    'red-g09-radar-01',
-  ]));
+  assert.equal(radarEmitters.filter(emitter => emitter.sourceEntityId === 'red-g01-radar-01').length, 2);
+  assert.equal(radarEmitters.filter(emitter => emitter.sourceEntityId === 'red-g03-radar-01').length, 2);
+  assert.ok(radarEmitters.some(emitter => emitter.sourceEntityId === 'red-g01-radar-01' && emitter.id.includes('blue-runtime-korea-1')));
+  assert.ok(radarEmitters.some(emitter => emitter.sourceEntityId === 'red-g03-radar-01' && emitter.id.includes('blue-runtime-okinawa-1')));
+  assert.deepEqual(new Set(ewEmitters.map(emitter => emitter.sourceEntityId)), new Set(['red-g01-radar-02']));
   assert.ok(ewEmitters.every(emitter => emitter.mode === 'track'));
   assert.deepEqual(attackEvents.map(event => event.sourceEntityId), [
-    'red-g01-air-03',
-    'red-g02-missile-01',
-    'red-g04-missile-01',
-    'red-g05-missile-01',
-    'red-g09-missile-01',
-    'blue-g01-missile2-01',
-    'blue-g02-missile3-01',
+    'blue-g01-missile-01',
+    'red-g01-radar-01',
+    'blue-g02-missile-01',
+    'blue-g03-missile-01',
+    'red-g01-radar-02',
+    'blue-g05-missile-01',
+    'red-g03-radar-01',
   ]);
+});
+
+test('Joint strike XML should drive satellite radar tracking for blue mobile targets', () => {
+  globalThis.DOMParser = TestDOMParser as any;
+  const xml = readFileSync('data-example/东海联合打击作战-1776954052336.xml', 'utf8');
+  const scenario = normalizeTacticalScenario(new XmlScenarioParser().parse(xml));
+  const engine = createEngineWithScenario(scenario);
+
+  const radarEmitters = callPrivateEmitterFactory(engine, 'createSensorEmitters');
+  const satelliteEmitters = radarEmitters.filter(emitter => emitter.sourceEntityId === 'red-satellite-001');
+
+  assert.ok(scenario.routes.some(route => route.entityId === 'blue-f15-001'));
+  assert.ok(scenario.phases.length > 0);
+  assert.ok(satelliteEmitters.length >= 1);
+  assert.ok(satelliteEmitters.every(emitter => emitter.kind === 'radar' && emitter.mode === 'track'));
+  assert.ok(satelliteEmitters.some(emitter => emitter.id.includes('blue-f15-001')));
 });

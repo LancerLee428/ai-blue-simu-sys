@@ -5,6 +5,7 @@ import { js2xml, xml2js, type Element as XmlElement } from 'xml-js';
 
 import { XmlScenarioParser } from '../xml-scenario-parser';
 import { XmlScenarioExporter } from '../xml-scenario-exporter';
+import { findScenarioSatelliteCameraTarget } from '../scenario-camera';
 
 type XmlNode = XmlElement & { parentNode?: XmlNode };
 
@@ -501,8 +502,8 @@ test('XML parser and exporter should preserve hierarchical formation groups', as
   assert.match(exported, /<Member equipRef="red-radar-01" role="雷达1-C"\/>/);
 });
 
-test('Example XML should configure red radar tracking, red EW, limited aircraft routes and missile launches', () => {
-  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+test('Example XML should configure limited red radar tracking, EW diversion, and missile intercept launches', () => {
+  const xml = readFileSync('data-example/东海-动态推演-0513.xml', 'utf8');
   globalThis.DOMParser = TestDOMParser as any;
 
   const scenario = new XmlScenarioParser().parse(xml);
@@ -513,58 +514,133 @@ test('Example XML should configure red radar tracking, red EW, limited aircraft 
   const redEwZones = scenario.detectionZones.filter(zone => zone.label?.includes('电子战干扰'));
   const ewEffects = scenario.visualEffects?.electronicWarfareEffects;
   const performance = scenario.visualEffects?.performance;
-  const routeIds = scenario.routes.map(route => route.entityId);
   const strikeAttackers = scenario.strikeTasks.map(task => task.attackerEntityId);
+  const redSatellite = scenario.forces
+    .flatMap(force => force.entities)
+    .find(entity => entity.id === 'red-g05-satellite-01');
   const redRadarEntityIds = scenario.forces
     .flatMap(force => force.entities)
     .filter(entity => entity.side === 'red' && /-radar-/.test(entity.id))
     .map(entity => entity.id)
     .sort();
-  const trajectoryAltitudes = scenario.strikeTasks
-    .flatMap(task => task.weaponTrajectory?.points ?? [])
-    .filter(point => point.role === 'boost' || point.role === 'cruise' || point.role === 'terminal')
-    .map(point => point.position.altitude);
+  const blueMissileEntityIds = scenario.forces
+    .flatMap(force => force.entities)
+    .filter(entity => entity.side === 'blue' && /-missile-/.test(entity.id))
+    .map(entity => entity.id);
+  const blueGroups = scenario.interactions?.groups.filter(group => group.side === 'blue') ?? [];
+  const redGroups = scenario.interactions?.groups.filter(group => group.side === 'red') ?? [];
+  const attackEvents = scenario.phases.flatMap(phase => phase.events).filter(event => event.type === 'attack');
+  const recommendationEvent = scenario.phases
+    .flatMap(phase => phase.events)
+    .find(event => event.detail.includes('推荐在山东半岛烟台外缘再部署一部补盲雷达'));
 
-  assert.deepEqual(redRadarEntityIds, ['red-g08-radar-01', 'red-g09-radar-01']);
-  assert.ok(redRadarZones.length > 0);
-  assert.ok(redRadarZones.every(zone => zone.radiusMeters === 1_200_000));
+  assert.deepEqual(redRadarEntityIds, [
+    'red-g01-radar-01',
+    'red-g01-radar-02',
+    'red-g02-radar-01',
+    'red-g02-radar-02',
+    'red-g03-radar-01',
+    'red-g03-radar-02',
+    'red-g04-radar-01',
+    'red-g04-radar-02',
+  ]);
+  assert.equal(redSatellite?.side, 'red');
+  assert.equal(redSatellite?.type, 'space-satellite');
+  assert.equal(redSatellite?.visualModel?.alias, 'wx');
+  assert.deepEqual(redSatellite?.loadout?.sensors, ['optical', 'radar']);
+  assert.ok((redSatellite?.position.altitude ?? 0) >= 700_000);
+  assert.equal(blueMissileEntityIds.length, 30);
+  assert.equal(blueGroups.length, 6);
+  assert.ok(blueGroups.every(group => group.members.length === 5));
+  assert.equal(redGroups.length, 5);
   assert.deepEqual(
     redRadarZones.map(zone => zone.entityId).sort(),
-    ['red-g08-radar-01', 'red-g09-radar-01'],
+    ['red-g01-radar-01', 'red-g03-radar-01'],
   );
   assert.deepEqual(
     redRadarZones.filter(zone => zone.tracking?.enabled).map(zone => zone.entityId).sort(),
-    ['red-g08-radar-01', 'red-g09-radar-01'],
+    ['red-g01-radar-01', 'red-g03-radar-01'],
   );
-  assert.ok(redRadarZones.filter(zone => zone.tracking?.enabled).every(zone => zone.tracking?.maxTracks === 24));
-  assert.deepEqual(redEwZones.map(zone => zone.entityId).sort(), ['red-g08-radar-01', 'red-g09-radar-01']);
-  assert.ok(redEwZones.every(zone => zone.side === 'red' && zone.radiusMeters === 1_200_000));
+  assert.equal(redRadarZones.find(zone => zone.entityId === 'red-g01-radar-01')?.radiusMeters, 1_150_000);
+  assert.equal(redRadarZones.find(zone => zone.entityId === 'red-g03-radar-01')?.radiusMeters, 1_050_000);
+  assert.ok(redRadarZones.every(zone => zone.tracking?.maxTracks === 2));
+  assert.deepEqual(redEwZones.map(zone => zone.entityId), ['red-g01-radar-02']);
+  assert.equal(redEwZones[0]?.radiusMeters, 800_000);
   assert.equal(ewEffects?.areaEnabled, false);
   assert.deepEqual(ewEffects?.trackingTargetTypes, ['enemy-missile']);
   assert.equal(ewEffects?.maxTracks, 1);
-  assert.equal(performance?.maxActiveScans, 24);
-  assert.equal(performance?.maxActivePulses, 2);
-  assert.deepEqual(new Set(trajectoryAltitudes), new Set([616_667, 506_667, 140_000]));
-  assert.deepEqual(routeIds.filter(id => id.startsWith('red-')).sort(), [
-    'red-g01-air-01',
-    'red-g01-air-02',
-    'red-g01-air-03',
-    'red-g02-air-01',
-    'red-g03-air-01',
-  ]);
-  assert.deepEqual(routeIds.filter(id => id.startsWith('blue-')).sort(), [
-    'blue-g01-air-01',
-    'blue-g02-air-01',
-  ]);
+  assert.equal(performance?.maxActiveScans, 8);
+  assert.equal(performance?.maxActivePulses, 1);
+  assert.ok(scenario.strikeTasks.every(task => (task.weaponTrajectory?.points.length ?? 0) >= 4));
   assert.deepEqual(strikeAttackers.filter(id => id.startsWith('red-')), [
-    'red-g01-air-03',
-    'red-g02-missile-01',
-    'red-g04-missile-01',
-    'red-g05-missile-01',
-    'red-g09-missile-01',
+    'red-g01-radar-01',
+    'red-g01-radar-02',
+    'red-g03-radar-01',
   ]);
   assert.deepEqual(strikeAttackers.filter(id => id.startsWith('blue-')), [
-    'blue-g01-missile2-01',
-    'blue-g02-missile3-01',
+    'blue-g01-missile-01',
+    'blue-g02-missile-01',
+    'blue-g03-missile-01',
+    'blue-g05-missile-01',
   ]);
+  assert.deepEqual(attackEvents.map(event => event.sourceEntityId), [
+    'blue-g01-missile-01',
+    'red-g01-radar-01',
+    'blue-g02-missile-01',
+    'blue-g03-missile-01',
+    'red-g01-radar-02',
+    'blue-g05-missile-01',
+    'red-g03-radar-01',
+  ]);
+  assert.equal(attackEvents.filter(event => event.targetEntityId?.includes('intercept')).length, 6);
+  assert.ok(attackEvents.some(event => event.targetEntityId === 'red-diverted-impact-marker' && event.detail.includes('改变落点')));
+  assert.ok(recommendationEvent);
+});
+
+test('Joint strike XML should include red satellite wide-area tracking and executable blue route', () => {
+  const xml = readFileSync('data-example/东海联合打击作战-1776954052336.xml', 'utf8');
+  globalThis.DOMParser = TestDOMParser as any;
+
+  const scenario = new XmlScenarioParser().parse(xml);
+  const redSatellite = scenario.forces
+    .flatMap(force => force.entities)
+    .find(entity => entity.id === 'red-satellite-001');
+  const satelliteZone = scenario.detectionZones
+    .find(zone => zone.entityId === 'red-satellite-001');
+  const blueFighterRoute = scenario.routes
+    .find(route => route.entityId === 'blue-f15-001');
+
+  assert.equal(redSatellite?.side, 'red');
+  assert.equal(redSatellite?.type, 'space-satellite');
+  assert.equal(redSatellite?.visualModel?.alias, 'wx');
+  assert.match(redSatellite?.visualModel?.uri ?? '', /wx\/WX_01_03\.glb/);
+  assert.ok((redSatellite?.position.altitude ?? 0) >= 700_000);
+  assert.equal(satelliteZone?.side, 'red');
+  assert.equal(satelliteZone?.radiusMeters, 50_000_000);
+  assert.deepEqual(satelliteZone?.tracking, {
+    enabled: true,
+    targetTypes: ['enemy-aircraft', 'enemy-missile'],
+    maxTracks: 12,
+  });
+  assert.equal(blueFighterRoute?.points.length, 3);
+  assert.equal(blueFighterRoute?.points.at(-1)?.timestamp, 120);
+});
+
+test('Current auto demo XML should use the red satellite as scenario camera target', () => {
+  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+  globalThis.DOMParser = TestDOMParser as any;
+
+  const scenario = new XmlScenarioParser().parse(xml);
+  const redSatellite = scenario.forces
+    .flatMap(force => force.entities)
+    .find(entity => entity.id === 'red-satellite-01');
+  const cameraTarget = findScenarioSatelliteCameraTarget(scenario);
+
+  assert.equal(redSatellite?.side, 'red');
+  assert.equal(redSatellite?.type, 'space-satellite');
+  assert.equal(redSatellite?.visualModel?.alias, 'wx');
+  assert.equal(redSatellite?.position.longitude, 104);
+  assert.equal(redSatellite?.position.latitude, 34);
+  assert.equal(redSatellite?.position.altitude, 800_000);
+  assert.equal(cameraTarget?.id, 'red-satellite-01');
 });

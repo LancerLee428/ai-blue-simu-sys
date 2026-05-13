@@ -295,7 +295,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
 
   // --- XML 导入 ---
 
-  function loadScenario(scenario: TacticalScenario) {
+  function loadScenario(scenario: TacticalScenario, options: { planId?: string } = {}) {
     const normalizedScenario = normalizeTacticalScenario(scenario);
     currentScenario.value = normalizedScenario;
     hasUnsavedScenarioEdit.value = false;
@@ -308,10 +308,12 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
 
     try {
       const actionPlanStore = useActionPlanStore();
-      actionPlanStore.createPlan(
-        normalizedScenario,
-        normalizedScenario.scenarioMetadata?.name ?? normalizedScenario.summary,
-      );
+      const planName = normalizedScenario.scenarioMetadata?.name ?? normalizedScenario.summary;
+      if (options.planId) {
+        actionPlanStore.createOrReplacePlan(options.planId, normalizedScenario, planName);
+      } else {
+        actionPlanStore.createPlan(normalizedScenario, planName);
+      }
     } catch (err) {
       console.error('Failed to create action plan:', err);
     }

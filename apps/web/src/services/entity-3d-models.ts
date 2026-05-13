@@ -450,6 +450,7 @@ const MODEL_3D_CONFIGS: Record<PlatformType, ModelConfig> = {
   'uav-strike':      { draw: drawFighter3D,       baseSize: 24 },
   'uav-recon':       { draw: drawFighter3D,       baseSize: 22 },
   'uav-swarm':       { draw: drawFighter3D,       baseSize: 20 },
+  'space-satellite': { draw: drawFighter3D,       baseSize: 26 },
 
   // 海上力量
   'ship-carrier':    { draw: drawCarrier3D,       baseSize: 44 },

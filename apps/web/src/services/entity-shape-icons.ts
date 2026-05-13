@@ -574,6 +574,7 @@ const SHAPE_CONFIGS: Record<PlatformType, ShapeConfig> = {
   'uav-strike':      { draw: drawDrone,          baseSize: 20 },
   'uav-recon':       { draw: drawDrone,          baseSize: 18 },
   'uav-swarm':       { draw: drawSwarm,          baseSize: 28 },
+  'space-satellite': { draw: drawDrone,          baseSize: 24 },
 
   // 海上力量
   'ship-carrier':    { draw: drawCarrier,        baseSize: 40 },

@@ -995,7 +995,8 @@ export class ExecutionEngine {
   private shouldHoldPhasePosition(entity: EntitySpec): boolean {
     return entity.type === 'ground-radar'
       || entity.type === 'facility-radar'
-      || entity.type === 'ground-ew';
+      || entity.type === 'ground-ew'
+      || entity.type === 'space-satellite';
   }
 
   /**

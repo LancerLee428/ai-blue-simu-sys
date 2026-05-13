@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import {
+  ref,
+  computed,
+  markRaw,
+  onMounted,
+  onUnmounted,
+  shallowRef,
+  watch,
+} from "vue";
 import * as Cesium from "cesium";
 import { usePlatformStore } from "../stores/platform";
 import { useEntityState } from "../composables/useEntityState";
@@ -17,11 +25,19 @@ import DecisionPanel from "../components/simulation/DecisionPanel.vue";
 import SimulationDrawer from "../components/simulation/SimulationDrawer.vue";
 import { MapRenderer } from "../services/map-renderer";
 import { ExecutionEngine } from "../services/execution-engine";
+import {
+  scheduleAutoScenarioDemo,
+  waitAutoDemoRafDelay,
+  type AutoScenarioDemoController,
+} from "../services/auto-scenario-demo";
 import { moveScenarioEntityWithLinkedGeometry } from "../services/scenario-edit-service";
+import { XmlScenarioParser } from "../services/xml-scenario-parser";
 import { useTacticalScenarioStore } from "../stores/tactical-scenario";
 import { useActionPlanStore } from "../stores/action-plan";
 import { usePanelState } from "../composables/usePanelState";
 import type { RouteDecision } from "../services/ai-decision-visualizer";
+import { AUTO_DEMO_CONFIG, type AutoDemoCameraConfig } from "../config/auto-demo";
+import defaultScenarioXml from "../../../../data-example/东海联合打击-2024-1777165955760.xml?raw";
 
 const store = usePlatformStore();
 const tacticalStore = useTacticalScenarioStore();
@@ -32,8 +48,8 @@ const { execute, undo, redo, canUndo, canRedo } = useCommandSystem();
 
 // ExecutionEngine and LeftSidebar refs
 const leftSidebarRef = ref<InstanceType<typeof LeftSidebar> | null>(null);
-const executionEngineRef = ref<ExecutionEngine | null>(null);
-const mapRendererRef = ref<MapRenderer | null>(null);
+const executionEngineRef = shallowRef<ExecutionEngine | null>(null);
+const mapRendererRef = shallowRef<MapRenderer | null>(null);
 
 // 决策面板状态
 const selectedRouteId = ref<string | null>(null);
@@ -44,6 +60,7 @@ const runtimeRadarScanVisible = ref<boolean | null>(null);
 const runtimeJammingVisible = ref<boolean | null>(null);
 const runtimeExplosionVisible = ref<boolean | null>(null);
 const loadedRuntimePlanId = ref<string | null>(null);
+let autoScenarioDemoController: AutoScenarioDemoController | null = null;
 
 // 组件卸载时清理
 onUnmounted(() => {
@@ -55,6 +72,8 @@ onUnmounted(() => {
   if (leftSidebarRef.value) {
     leftSidebarRef.value = null;
   }
+  autoScenarioDemoController?.cancel();
+  autoScenarioDemoController = null;
 });
 
 // 撤销重做处理函数
@@ -80,21 +99,29 @@ function syncExecutionStateFromEngine() {
   });
 }
 
-function syncActivePlanToRuntime(options: { flyTo?: boolean } = {}) {
+interface RuntimeSyncResult {
+  synced: boolean;
+  cameraFlight: Promise<boolean> | null;
+}
+
+function syncActivePlanToRuntime(
+  options: { flyTo?: boolean; cameraConfig?: AutoDemoCameraConfig } = {},
+): RuntimeSyncResult {
   const activePlan = actionPlanStore.activePlan;
   const engine = executionEngineRef.value;
   const renderer = mapRendererRef.value;
-  if (!activePlan || !engine || !renderer) return false;
-  if (loadedRuntimePlanId.value === activePlan.id) return true;
+  if (!activePlan || !engine || !renderer) return { synced: false, cameraFlight: null };
+  if (loadedRuntimePlanId.value === activePlan.id) return { synced: true, cameraFlight: null };
 
   engine.load(activePlan.scenario);
   renderer.renderScenario(activePlan.scenario);
+  let cameraFlight: Promise<boolean> | null = null;
   if (options.flyTo) {
-    renderer.flyToScenario(activePlan.scenario);
+    cameraFlight = renderer.flyToScenario(activePlan.scenario, options.cameraConfig);
   }
   loadedRuntimePlanId.value = activePlan.id;
   syncExecutionStateFromEngine();
-  return true;
+  return { synced: true, cameraFlight };
 }
 
 function handleSimulationPlay() {
@@ -188,6 +215,11 @@ const deploymentConfig = ref<{
 
 onMounted(() => {
   store.bootstrap();
+  autoScenarioDemoController = scheduleAutoScenarioDemo({
+    delayMs: AUTO_DEMO_CONFIG.importDelayMs,
+    isReady: () => Boolean(executionEngineRef.value && mapRendererRef.value),
+    run: autoLoadDefaultScenarioAndPlay,
+  });
 });
 
 watch(
@@ -214,8 +246,8 @@ watch(
  * 初始化战术引擎（Cesium viewer 就绪后调用）
  */
 function handleViewerReady(viewer: Cesium.Viewer) {
-  const renderer = new MapRenderer(viewer);
-  const engine = new ExecutionEngine(viewer, renderer);
+  const renderer = markRaw(new MapRenderer(viewer));
+  const engine = markRaw(new ExecutionEngine(viewer, renderer));
 
   // 保存引用以便清理
   executionEngineRef.value = engine;
@@ -270,6 +302,32 @@ function handleViewerReady(viewer: Cesium.Viewer) {
       });
     }
   });
+}
+
+async function autoLoadDefaultScenarioAndPlay() {
+  const engine = executionEngineRef.value;
+  const renderer = mapRendererRef.value;
+  if (!engine || !renderer) return;
+
+  try {
+    const scenario = new XmlScenarioParser().parse(defaultScenarioXml);
+    tacticalStore.loadScenario(scenario, { planId: AUTO_DEMO_CONFIG.planId });
+    loadedRuntimePlanId.value = null;
+    const syncResult = syncActivePlanToRuntime({
+      flyTo: true,
+      cameraConfig: AUTO_DEMO_CONFIG.camera,
+    });
+    if (syncResult.cameraFlight) {
+      await syncResult.cameraFlight;
+    }
+    await waitAutoDemoRafDelay(AUTO_DEMO_CONFIG.playDelayAfterCameraArriveMs);
+    if (executionEngineRef.value !== engine || mapRendererRef.value !== renderer) return;
+    if (actionPlanStore.activePlanId !== AUTO_DEMO_CONFIG.planId) return;
+    engine.play();
+    syncExecutionStateFromEngine();
+  } catch (error) {
+    console.error("自动加载默认想定失败:", error);
+  }
 }
 
 /**

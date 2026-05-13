@@ -1,5 +1,6 @@
 // apps/web/src/services/map-renderer.ts
 import * as Cesium from 'cesium';
+import { AUTO_DEMO_CONFIG, type AutoDemoCameraConfig } from '../config/auto-demo';
 import type {
   TacticalScenario,
   EntitySpec,
@@ -40,6 +41,7 @@ import {
 } from './runtime-visual-math';
 import { buildRuntimeWeaponTrail } from './runtime-weapon-trail';
 import { resolveVisualModel, resolveWeaponVisualModel, type ResolvedVisualModel } from './visual-models';
+import { findScenarioSatelliteCameraTarget, getSatelliteCameraRangeMeters } from './scenario-camera';
 
 const SIDE_VISUALS: Record<ForceSide, {
   label: Cesium.Color;
@@ -1344,7 +1346,44 @@ export class MapRenderer {
   /**
    * 聚焦到战术区域（全局视角）
    */
-  flyToScenario(scenario: TacticalScenario): void {
+  flyToScenario(
+    scenario: TacticalScenario,
+    cameraConfig: AutoDemoCameraConfig = AUTO_DEMO_CONFIG.camera,
+  ): Promise<boolean> {
+    const satelliteTarget = findScenarioSatelliteCameraTarget(scenario);
+    if (satelliteTarget) {
+      const targetEntity = this.viewer.entities.getById(satelliteTarget.id);
+      const rangeMeters = getSatelliteCameraRangeMeters(satelliteTarget, cameraConfig);
+      if (targetEntity) {
+        return this.viewer.flyTo(targetEntity, {
+          duration: cameraConfig.flyDurationSec,
+          offset: new Cesium.HeadingPitchRange(
+            Cesium.Math.toRadians(cameraConfig.headingDeg),
+            Cesium.Math.toRadians(cameraConfig.pitchDeg),
+            rangeMeters,
+          ),
+        });
+      }
+
+      return new Promise((resolve) => {
+        this.viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(
+            satelliteTarget.position.longitude,
+            satelliteTarget.position.latitude,
+            satelliteTarget.position.altitude + rangeMeters,
+          ),
+          orientation: {
+            heading: Cesium.Math.toRadians(cameraConfig.headingDeg),
+            pitch: Cesium.Math.toRadians(cameraConfig.pitchDeg),
+            roll: 0,
+          },
+          duration: cameraConfig.flyDurationSec,
+          complete: () => resolve(true),
+          cancel: () => resolve(false),
+        });
+      });
+    }
+
     // 收集所有实体坐标
     const allPositions: Cesium.Cartesian3[] = [];
     scenario.forces.forEach((force) => {
@@ -1359,7 +1398,7 @@ export class MapRenderer {
       });
     });
 
-    if (allPositions.length === 0) return;
+    if (allPositions.length === 0) return Promise.resolve(false);
 
     // 计算所有实体的边界框
     let minLon = Infinity, maxLon = -Infinity;
@@ -1388,14 +1427,18 @@ export class MapRenderer {
     );
     const range = Math.min(Math.max(neededRange * 1.8, 500000), 2_500_000); // 1.8x 余量，上限 2500km
 
-    this.viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, range),
-      orientation: {
-        heading: Cesium.Math.toRadians(0),
-        pitch: Cesium.Math.toRadians(-45),
-        roll: 0,
-      },
-      duration: 2.5,
+    return new Promise((resolve) => {
+      this.viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, range),
+        orientation: {
+          heading: Cesium.Math.toRadians(0),
+          pitch: Cesium.Math.toRadians(-45),
+          roll: 0,
+        },
+        duration: 2.5,
+        complete: () => resolve(true),
+        cancel: () => resolve(false),
+      });
     });
   }
 }

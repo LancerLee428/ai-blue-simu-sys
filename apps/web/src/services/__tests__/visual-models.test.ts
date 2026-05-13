@@ -8,10 +8,11 @@ import {
   resolveWeaponVisualModel,
 } from '../visual-models';
 
-test('visual model aliases should resolve bundled aircraft ship missile and radar glb assets', () => {
+test('visual model aliases should resolve bundled aircraft ship missile radar and satellite glb assets', () => {
   assert.match(resolveVisualModel({ alias: 'fj' }, 'air-fighter')?.uri ?? '', /\/assets\/3d-model\/fj\/ZDJ_01_v3\.glb(\?|$)/);
   assert.match(resolveVisualModel({ alias: 'jt' }, 'ship-destroyer')?.uri ?? '', /\/assets\/3d-model\/jt\/SMJT_01\.glb(\?|$)/);
   assert.match(resolveVisualModel({ alias: 'ld' }, 'ground-radar')?.uri ?? '', /\/assets\/3d-model\/ld\/ld_01\.glb(\?|$)/);
+  assert.match(resolveVisualModel({ alias: 'wx' }, 'space-satellite')?.uri ?? '', /\/assets\/3d-model\/wx\/WX_01_03\.glb(\?|$)/);
   assert.match(resolveWeaponVisualModel({ alias: 'dd' })?.uri ?? '', /\/assets\/3d-model\/dd\/XHDD_01\.glb(\?|$)/);
 });
 
@@ -46,20 +47,30 @@ test('visual model resolver should map bundled XML relative paths to build asset
 
   assert.match(resolved?.uri ?? '', /\/assets\/3d-model\/fj\/ZDJ_01_v3\.glb(\?|$)/);
   assert.equal(resolved?.scale, 0.07);
+
+  const satellite = resolveVisualModel({
+    uri: 'wx/WX_01_03.glb',
+    scale: 0.03,
+  }, 'space-satellite');
+
+  assert.match(satellite?.uri ?? '', /\/assets\/3d-model\/wx\/WX_01_03\.glb(\?|$)/);
+  assert.equal(satellite?.scale, 0.03);
 });
 
 test('default visual model mapping should follow platform category', () => {
   assert.equal(getDefaultEntityVisualModel('air-jammer')?.alias, 'fj');
+  assert.equal(getDefaultEntityVisualModel('space-satellite')?.alias, 'wx');
   assert.equal(getDefaultEntityVisualModel('ship-carrier')?.alias, 'jt');
   assert.equal(getDefaultEntityVisualModel('facility-radar')?.alias, 'ld');
   assert.equal(getDefaultEntityVisualModel('facility-target'), null);
 });
 
-test('example XML should reference the current bundled aircraft and radar model files', () => {
-  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+test('example XML should reference the current bundled missile radar and satellite model files', () => {
+  const xml = readFileSync('data-example/东海-动态推演-0513.xml', 'utf8');
 
-  assert.match(xml, /uri="fj\/ZDJ_01_v3\.glb"/);
+  assert.match(xml, /uri="dd\/XHDD_01\.glb"/);
   assert.match(xml, /uri="ld\/ld_01\.glb"/);
+  assert.match(xml, /alias="wx" uri="wx\/WX_01_03\.glb"/);
   assert.doesNotMatch(xml, /uri="fj\/SMJT_01\.glb"/);
   assert.doesNotMatch(xml, /uri="ld\/SMJT_01\.glb"/);
 });

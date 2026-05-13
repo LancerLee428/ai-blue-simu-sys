@@ -42,6 +42,7 @@ export function getFormationRoleMarker(role: FormationRoleMarker | undefined): F
 }
 
 function getEntityRoleLabel(entity: EntitySpec): string {
+  if (entity.type === 'space-satellite') return '卫星';
   if (PLATFORM_META[entity.type]?.category === 'air') return '飞机';
   if (entity.type.startsWith('ship-')) return '平台';
   if (entity.type.includes('radar')) return '雷达';

@@ -249,6 +249,7 @@ export class DynamicDetectionCalculator {
       // 小型目标
       'uav-strike': { rcs: 0.01, stealth: true },
       'uav-recon': { rcs: 0.01, stealth: true },
+      'space-satellite': { rcs: 5, stealth: false },
     };
 
     return charMap[platformType] ?? { rcs: 1.0 };

@@ -12,13 +12,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectRoute: [routeId: string];
+  editRoutePoint: [routeIndex: number, pointIndex: number];
 }>();
 
 // 路线列表(带实体信息)
 const routesWithEntity = computed(() => {
   const routeCountMap = new Map<string, number>();
 
-  return props.routes.map((route) => {
+  return props.routes.map((route, routeIndex) => {
     const entity = props.entities.find(e => e.id === route.entityId);
     const idx = routeCountMap.get(route.entityId) ?? 0;
     routeCountMap.set(route.entityId, idx + 1);
@@ -27,6 +28,7 @@ const routesWithEntity = computed(() => {
 
     return {
       routeId,
+      routeIndex,
       route,
       entity,
       decision,
@@ -127,6 +129,14 @@ function getScoreClass(score: number): string {
               <div class="waypoint-pos">{{ formatPosition(point.position) }}</div>
               <div v-if="point.timestamp" class="waypoint-time">T+{{ point.timestamp }}s</div>
             </div>
+            <button
+              type="button"
+              class="waypoint-edit-button"
+              title="编辑关键点经纬高"
+              @click.stop="emit('editRoutePoint', item.routeIndex, idx)"
+            >
+              编辑
+            </button>
           </div>
         </div>
       </details>
@@ -366,6 +376,7 @@ function getScoreClass(score: number): string {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .waypoint-pos {
@@ -377,6 +388,24 @@ function getScoreClass(score: number): string {
 .waypoint-time {
   font-size: 9px;
   color: #4a5a6a;
+}
+
+.waypoint-edit-button {
+  align-self: center;
+  flex: 0 0 auto;
+  border: 1px solid rgba(107, 196, 255, 0.22);
+  border-radius: 5px;
+  background: rgba(107, 196, 255, 0.08);
+  color: #8dd4ff;
+  font-size: 10px;
+  line-height: 1;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+
+.waypoint-edit-button:hover {
+  border-color: rgba(107, 196, 255, 0.45);
+  background: rgba(107, 196, 255, 0.14);
 }
 
 /* 滚动条样式 */

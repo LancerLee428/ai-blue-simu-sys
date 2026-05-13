@@ -1,8 +1,8 @@
 <!-- apps/web/src/components/simulation/SimulationDrawer.vue -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import type { ActionPlan } from '../../stores/action-plan';
-import type { Phase, TacticalEvent } from '../../types/tactical-scenario';
+import { computed, ref } from "vue";
+import type { ActionPlan } from "../../stores/action-plan";
+import type { Phase, TacticalEvent } from "../../types/tactical-scenario";
 
 const props = defineProps<{
   open: boolean;
@@ -34,10 +34,18 @@ const stepOptions = [1, 5, 10, 30, 60];
 const stepSeconds = ref(10);
 
 const phases = computed(() => props.plan?.scenario.phases ?? []);
-const totalDuration = computed(() => phases.value.reduce((sum, phase) => sum + phase.duration, 0));
-const currentPhaseIndex = computed(() => props.plan?.executionState.currentPhaseIndex ?? 0);
-const currentPhaseElapsed = computed(() => props.plan?.executionState.currentTime ?? 0);
-const executionStatus = computed(() => props.plan?.executionState.status ?? 'idle');
+const totalDuration = computed(() =>
+  phases.value.reduce((sum, phase) => sum + phase.duration, 0),
+);
+const currentPhaseIndex = computed(
+  () => props.plan?.executionState.currentPhaseIndex ?? 0,
+);
+const currentPhaseElapsed = computed(
+  () => props.plan?.executionState.currentTime ?? 0,
+);
+const executionStatus = computed(
+  () => props.plan?.executionState.status ?? "idle",
+);
 const currentTotalTime = computed(() => {
   return phaseStartSeconds(currentPhaseIndex.value) + currentPhaseElapsed.value;
 });
@@ -62,7 +70,7 @@ const timelineRows = computed(() => {
       end: cursor,
       left: percent(start),
       width: Math.max(percent(phase.duration), 1.5),
-      events: phase.events.map(event => ({
+      events: phase.events.map((event) => ({
         event,
         left: percent(start + event.timestamp),
       })),
@@ -70,7 +78,11 @@ const timelineRows = computed(() => {
   });
 });
 
-type PhaseVisualState = 'phase-pending' | 'phase-active' | 'phase-complete' | 'phase-final';
+type PhaseVisualState =
+  | "phase-pending"
+  | "phase-active"
+  | "phase-complete"
+  | "phase-final";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -82,20 +94,26 @@ function percent(seconds: number): number {
 }
 
 function phaseStartSeconds(index: number): number {
-  return phases.value.slice(0, index).reduce((sum, phase) => sum + phase.duration, 0);
+  return phases.value
+    .slice(0, index)
+    .reduce((sum, phase) => sum + phase.duration, 0);
 }
 
 function getPhaseState(index: number): PhaseVisualState {
-  if (executionStatus.value === 'completed') return 'phase-final';
-  if (executionStatus.value === 'idle') return 'phase-pending';
-  if (index < currentPhaseIndex.value) return 'phase-complete';
-  if (index === currentPhaseIndex.value) return 'phase-active';
-  return 'phase-pending';
+  if (executionStatus.value === "completed") return "phase-final";
+  if (executionStatus.value === "idle") return "phase-pending";
+  if (index < currentPhaseIndex.value) return "phase-complete";
+  if (index === currentPhaseIndex.value) return "phase-active";
+  return "phase-pending";
 }
 
-function getPhaseProgress(phase: Phase, index: number, state: PhaseVisualState): number {
-  if (state === 'phase-complete' || state === 'phase-final') return 100;
-  if (state !== 'phase-active' || phase.duration <= 0) return 0;
+function getPhaseProgress(
+  phase: Phase,
+  index: number,
+  state: PhaseVisualState,
+): number {
+  if (state === "phase-complete" || state === "phase-final") return 100;
+  if (state !== "phase-active" || phase.duration <= 0) return 0;
   return clamp((currentPhaseElapsed.value / phase.duration) * 100, 0, 100);
 }
 
@@ -103,199 +121,256 @@ function formatTime(seconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(seconds));
   const mins = Math.floor(safeSeconds / 60);
   const secs = safeSeconds % 60;
-  return `T+${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  return `T+${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
 function getStatusLabel(status: string | undefined): string {
   const map: Record<string, string> = {
-    idle: '待命',
-    running: '推演中',
-    paused: '已暂停',
-    completed: '已完成',
+    idle: "待命",
+    running: "推演中",
+    paused: "已暂停",
+    completed: "已完成",
   };
-  return map[status ?? 'idle'] ?? status ?? '待命';
+  return map[status ?? "idle"] ?? status ?? "待命";
 }
 
 function getDebugToggleLabel(value: boolean | null): string {
-  if (value === true) return '开';
-  if (value === false) return '关';
-  return '自动';
+  if (value === true) return "开";
+  if (value === false) return "关";
+  return "自动";
 }
 
 function getEventLabel(event: TacticalEvent): string {
   const map: Record<string, string> = {
-    movement: '机动',
-    detection: '探测',
-    attack: '打击',
-    damage: '受损',
-    destruction: '毁伤',
-    'weapon-launch': '发射',
-    'weapon-impact': '命中',
+    movement: "机动",
+    detection: "探测",
+    attack: "打击",
+    damage: "受损",
+    destruction: "毁伤",
+    "weapon-launch": "发射",
+    "weapon-impact": "命中",
   };
   return map[event.type] ?? event.type;
 }
 
 function handlePlayToggle() {
-  if (props.plan?.executionState.status === 'running') {
-    emit('pause');
+  if (props.plan?.executionState.status === "running") {
+    emit("pause");
   } else {
-    emit('play');
+    emit("play");
   }
 }
 </script>
 
 <template>
   <Transition name="simulation-drawer">
-  <div v-if="open" class="simulation-drawer">
-    <div class="drawer-header">
-      <div class="title-block">
-        <div class="drawer-title">仿真推演</div>
-        <div class="drawer-subtitle">{{ plan?.name ?? '暂无行动计划' }}</div>
-      </div>
-      <div class="status-strip">
-        <span class="status-badge" :class="`status-${plan?.executionState.status ?? 'idle'}`">
-          {{ getStatusLabel(plan?.executionState.status) }}
-        </span>
-        <span class="time-readout">{{ formatTime(currentTotalTime) }} / {{ formatTime(totalDuration) }}</span>
-      </div>
-      <button type="button" class="close-button" @click="emit('close')">×</button>
-    </div>
-
-    <div class="control-bar">
-      <button type="button" class="control-button" :disabled="!plan" @click="emit('prevPhase')">⏮</button>
-      <button type="button" class="control-button" :disabled="!plan" @click="emit('stepBackward', stepSeconds)">⏪</button>
-      <button type="button" class="play-button" :disabled="!plan" @click="handlePlayToggle">
-        {{ plan?.executionState.status === 'running' ? '暂停' : '开始' }}
-      </button>
-      <button type="button" class="control-button" :disabled="!plan" @click="emit('stepForward', stepSeconds)">⏩</button>
-      <button type="button" class="control-button" :disabled="!plan" @click="emit('nextPhase')">⏭</button>
-      <button type="button" class="danger-button" :disabled="!plan" @click="emit('reset')">重置</button>
-
-      <div class="selector-group">
-        <span>步长</span>
-        <button
-          v-for="option in stepOptions"
-          :key="option"
-          type="button"
-          class="chip-button"
-          :class="{ active: stepSeconds === option }"
-          @click="stepSeconds = option"
-        >
-          {{ option }}s
+    <div v-if="open" class="simulation-drawer">
+      <div class="drawer-header">
+        <div class="title-block">
+          <div class="drawer-title">方案推演</div>
+          <div class="drawer-subtitle">{{ plan?.name ?? "暂无行动计划" }}</div>
+        </div>
+        <div class="status-strip">
+          <span
+            class="status-badge"
+            :class="`status-${plan?.executionState.status ?? 'idle'}`"
+          >
+            {{ getStatusLabel(plan?.executionState.status) }}
+          </span>
+          <span class="time-readout"
+            >{{ formatTime(currentTotalTime) }} /
+            {{ formatTime(totalDuration) }}</span
+          >
+        </div>
+        <button type="button" class="close-button" @click="emit('close')">
+          ×
         </button>
       </div>
 
-      <div class="selector-group">
-        <span>倍速</span>
+      <div class="control-bar">
         <button
-          v-for="option in speedOptions"
-          :key="option"
           type="button"
-          class="chip-button"
-          :class="{ active: plan?.executionState.speed === option }"
+          class="control-button"
           :disabled="!plan"
-          @click="emit('setSpeed', option)"
+          @click="emit('prevPhase')"
         >
-          {{ option }}x
+          ⏮
         </button>
-      </div>
+        <button
+          type="button"
+          class="control-button"
+          :disabled="!plan"
+          @click="emit('stepBackward', stepSeconds)"
+        >
+          ⏪
+        </button>
+        <button
+          type="button"
+          class="play-button"
+          :disabled="!plan"
+          @click="handlePlayToggle"
+        >
+          {{ plan?.executionState.status === "running" ? "暂停" : "开始" }}
+        </button>
+        <button
+          type="button"
+          class="control-button"
+          :disabled="!plan"
+          @click="emit('stepForward', stepSeconds)"
+        >
+          ⏩
+        </button>
+        <button
+          type="button"
+          class="control-button"
+          :disabled="!plan"
+          @click="emit('nextPhase')"
+        >
+          ⏭
+        </button>
+        <button
+          type="button"
+          class="danger-button"
+          :disabled="!plan"
+          @click="emit('reset')"
+        >
+          重置
+        </button>
 
-      <div class="selector-group debug-toggle-group">
-        <span>雷达调试</span>
-        <button
-          type="button"
-          class="chip-button debug-chip"
-          :class="{ active: staticDetectionVisible }"
-          :disabled="!plan"
-          @click="emit('toggleStaticDetection', !staticDetectionVisible)"
-        >
-          静态范围{{ staticDetectionVisible ? '开' : '关' }}
-        </button>
-        <button
-          type="button"
-          class="chip-button debug-chip"
-          :class="{ active: runtimeRadarScanVisible }"
-          :disabled="!plan"
-          @click="emit('toggleRuntimeRadarScan', !runtimeRadarScanVisible)"
-        >
-          动态扫描{{ getDebugToggleLabel(runtimeRadarScanVisible) }}
-        </button>
-        <button
-          type="button"
-          class="chip-button debug-chip"
-          :class="{ active: runtimeJammingVisible }"
-          :disabled="!plan"
-          @click="emit('toggleRuntimeJamming', !runtimeJammingVisible)"
-        >
-          干扰效果{{ getDebugToggleLabel(runtimeJammingVisible) }}
-        </button>
-        <button
-          type="button"
-          class="chip-button debug-chip"
-          :class="{ active: runtimeExplosionVisible }"
-          :disabled="!plan"
-          @click="emit('toggleRuntimeExplosion', !runtimeExplosionVisible)"
-        >
-          爆炸效果{{ getDebugToggleLabel(runtimeExplosionVisible) }}
-        </button>
-      </div>
-    </div>
-
-    <div class="gantt-wrap">
-      <div v-if="plan && phases.length > 0" class="gantt-board">
-        <div class="time-axis">
-          <span>0s</span>
-          <span>{{ Math.round(totalDuration / 2) }}s</span>
-          <span>{{ totalDuration }}s</span>
+        <div class="selector-group">
+          <span>步长</span>
+          <button
+            v-for="option in stepOptions"
+            :key="option"
+            type="button"
+            class="chip-button"
+            :class="{ active: stepSeconds === option }"
+            @click="stepSeconds = option"
+          >
+            {{ option }}s
+          </button>
         </div>
 
-        <div class="timeline-lane">
-          <div
-            v-for="row in timelineRows"
-            :key="row.phase.id"
-            class="phase-bar"
-            :class="[
-              row.state,
-              {
-                active: row.index === currentPhaseIndex,
-                'is-running': row.state === 'phase-active' && plan.executionState.status === 'running',
-              },
-            ]"
-            :style="{ left: `${row.left}%`, width: `${row.width}%`, '--phase-progress': `${row.progress}%` }"
+        <div class="selector-group">
+          <span>倍速</span>
+          <button
+            v-for="option in speedOptions"
+            :key="option"
+            type="button"
+            class="chip-button"
+            :class="{ active: plan?.executionState.speed === option }"
+            :disabled="!plan"
+            @click="emit('setSpeed', option)"
           >
-            <span>{{ row.phase.name }}</span>
-            <em>{{ row.phase.duration }}s</em>
+            {{ option }}x
+          </button>
+        </div>
+
+        <div class="selector-group debug-toggle-group">
+          <span>雷达调试</span>
+          <button
+            type="button"
+            class="chip-button debug-chip"
+            :class="{ active: staticDetectionVisible }"
+            :disabled="!plan"
+            @click="emit('toggleStaticDetection', !staticDetectionVisible)"
+          >
+            静态范围{{ staticDetectionVisible ? "开" : "关" }}
+          </button>
+          <button
+            type="button"
+            class="chip-button debug-chip"
+            :class="{ active: runtimeRadarScanVisible }"
+            :disabled="!plan"
+            @click="emit('toggleRuntimeRadarScan', !runtimeRadarScanVisible)"
+          >
+            动态扫描{{ getDebugToggleLabel(runtimeRadarScanVisible) }}
+          </button>
+          <button
+            type="button"
+            class="chip-button debug-chip"
+            :class="{ active: runtimeJammingVisible }"
+            :disabled="!plan"
+            @click="emit('toggleRuntimeJamming', !runtimeJammingVisible)"
+          >
+            干扰效果{{ getDebugToggleLabel(runtimeJammingVisible) }}
+          </button>
+          <button
+            type="button"
+            class="chip-button debug-chip"
+            :class="{ active: runtimeExplosionVisible }"
+            :disabled="!plan"
+            @click="emit('toggleRuntimeExplosion', !runtimeExplosionVisible)"
+          >
+            爆炸效果{{ getDebugToggleLabel(runtimeExplosionVisible) }}
+          </button>
+        </div>
+      </div>
+
+      <div class="gantt-wrap">
+        <div v-if="plan && phases.length > 0" class="gantt-board">
+          <div class="time-axis">
+            <span>0s</span>
+            <span>{{ Math.round(totalDuration / 2) }}s</span>
+            <span>{{ totalDuration }}s</span>
           </div>
-          <div class="playhead" :style="{ left: `${playheadPercent}%` }"></div>
-        </div>
 
-        <div class="event-lane">
-          <div
-            v-for="row in timelineRows"
-            :key="`${row.phase.id}-events`"
-            class="event-row"
-          >
-            <span class="row-label">阶段{{ row.index + 1 }}</span>
-            <div class="row-line">
-              <button
-                v-for="item in row.events"
-                :key="`${row.phase.id}-${item.event.timestamp}-${item.event.detail}`"
-                type="button"
-                class="event-dot"
-                :class="`event-${item.event.type}`"
-                :style="{ left: `${item.left}%` }"
-                :title="`${formatTime(row.start + item.event.timestamp)} ${getEventLabel(item.event)}：${item.event.detail}`"
-              >
-                {{ getEventLabel(item.event).slice(0, 1) }}
-              </button>
+          <div class="timeline-lane">
+            <div
+              v-for="row in timelineRows"
+              :key="row.phase.id"
+              class="phase-bar"
+              :class="[
+                row.state,
+                {
+                  active: row.index === currentPhaseIndex,
+                  'is-running':
+                    row.state === 'phase-active' &&
+                    plan.executionState.status === 'running',
+                },
+              ]"
+              :style="{
+                left: `${row.left}%`,
+                width: `${row.width}%`,
+                '--phase-progress': `${row.progress}%`,
+              }"
+            >
+              <span>{{ row.phase.name }}</span>
+              <em>{{ row.phase.duration }}s</em>
+            </div>
+            <div
+              class="playhead"
+              :style="{ left: `${playheadPercent}%` }"
+            ></div>
+          </div>
+
+          <div class="event-lane">
+            <div
+              v-for="row in timelineRows"
+              :key="`${row.phase.id}-events`"
+              class="event-row"
+            >
+              <span class="row-label">阶段{{ row.index + 1 }}</span>
+              <div class="row-line">
+                <button
+                  v-for="item in row.events"
+                  :key="`${row.phase.id}-${item.event.timestamp}-${item.event.detail}`"
+                  type="button"
+                  class="event-dot"
+                  :class="`event-${item.event.type}`"
+                  :style="{ left: `${item.left}%` }"
+                  :title="`${formatTime(row.start + item.event.timestamp)} ${getEventLabel(item.event)}：${item.event.detail}`"
+                >
+                  {{ getEventLabel(item.event).slice(0, 1) }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div v-else class="empty-state">暂无可推演的行动计划</div>
+        <div v-else class="empty-state">暂无可推演的行动计划</div>
+      </div>
     </div>
-  </div>
   </Transition>
 </template>
 
@@ -330,8 +405,11 @@ function handlePlayToggle() {
   display: flex;
   flex-direction: column;
   border-top: 1px solid rgba(107, 196, 255, 0.28);
-  background:
-    linear-gradient(180deg, rgba(7, 20, 34, 0.98), rgba(3, 10, 18, 0.99));
+  background: linear-gradient(
+    180deg,
+    rgba(7, 20, 34, 0.98),
+    rgba(3, 10, 18, 0.99)
+  );
   box-shadow: 0 -14px 32px rgba(0, 0, 0, 0.46);
 }
 
@@ -372,14 +450,26 @@ function handlePlayToggle() {
   font-size: 12px;
 }
 
-.status-idle { color: #8ea4c9; background: rgba(255, 255, 255, 0.08); }
-.status-running { color: #00d6c9; background: rgba(0, 214, 201, 0.16); }
-.status-paused { color: #ffc107; background: rgba(255, 193, 7, 0.16); }
-.status-completed { color: #4caf50; background: rgba(76, 175, 80, 0.16); }
+.status-idle {
+  color: #8ea4c9;
+  background: rgba(255, 255, 255, 0.08);
+}
+.status-running {
+  color: #00d6c9;
+  background: rgba(0, 214, 201, 0.16);
+}
+.status-paused {
+  color: #ffc107;
+  background: rgba(255, 193, 7, 0.16);
+}
+.status-completed {
+  color: #4caf50;
+  background: rgba(76, 175, 80, 0.16);
+}
 
 .time-readout {
   color: #00d6c9;
-  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
   font-size: 14px;
   font-weight: 700;
 }
@@ -521,7 +611,7 @@ function handlePlayToggle() {
   color: #7dd3fc;
   font-size: 11px;
   font-weight: 600;
-  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
   background: rgba(0, 28, 42, 0.72);
   border-bottom: 1px solid rgba(2, 124, 167, 0.25);
 }
@@ -534,7 +624,9 @@ function handlePlayToggle() {
   background:
     linear-gradient(to right, rgba(2, 124, 167, 0.12) 1px, transparent 1px),
     rgba(0, 12, 22, 0.42);
-  background-size: 44px 100%, auto;
+  background-size:
+    44px 100%,
+    auto;
   border-bottom: 1px solid rgba(2, 124, 167, 0.14);
 }
 
@@ -550,16 +642,22 @@ function handlePlayToggle() {
   border-radius: 3px;
   padding: 0 8px;
   color: rgba(255, 255, 255, 0.9);
-  background: linear-gradient(90deg, rgba(38, 64, 92, 0.78), rgba(22, 42, 64, 0.82));
+  background: linear-gradient(
+    90deg,
+    rgba(38, 64, 92, 0.78),
+    rgba(22, 42, 64, 0.82)
+  );
   border: 1px solid rgba(125, 164, 204, 0.22);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
   overflow: hidden;
-  transition: filter 0.15s, box-shadow 0.15s;
+  transition:
+    filter 0.15s,
+    box-shadow 0.15s;
 }
 
 .phase-bar::before,
 .phase-bar::after {
-  content: '';
+  content: "";
   position: absolute;
   pointer-events: none;
 }
@@ -580,7 +678,11 @@ function handlePlayToggle() {
 
 .phase-bar.phase-active {
   color: #eaffff;
-  background: linear-gradient(90deg, rgba(16, 44, 68, 0.9), rgba(13, 62, 78, 0.92));
+  background: linear-gradient(
+    90deg,
+    rgba(16, 44, 68, 0.9),
+    rgba(13, 62, 78, 0.92)
+  );
   border-color: rgba(0, 214, 201, 0.54);
   box-shadow:
     0 0 12px rgba(0, 214, 201, 0.28),
@@ -609,14 +711,21 @@ function handlePlayToggle() {
   width: 12px;
   transform: translateX(-50%);
   border-radius: 999px;
-  background: linear-gradient(180deg, transparent, rgba(195, 255, 255, 0.96), transparent);
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(195, 255, 255, 0.96),
+    transparent
+  );
   filter: blur(1px);
   opacity: 0.74;
   box-shadow: 0 0 14px rgba(128, 245, 255, 0.8);
 }
 
 .phase-bar.phase-active.is-running::before {
-  background-size: auto, 30px 100%;
+  background-size:
+    auto,
+    30px 100%;
   animation: waterFlow 0.9s linear infinite;
 }
 
@@ -626,7 +735,11 @@ function handlePlayToggle() {
 
 .phase-bar.phase-complete {
   color: #e8fff7;
-  background: linear-gradient(90deg, rgba(18, 128, 98, 0.9), rgba(34, 197, 94, 0.86));
+  background: linear-gradient(
+    90deg,
+    rgba(18, 128, 98, 0.9),
+    rgba(34, 197, 94, 0.86)
+  );
   border-color: rgba(74, 222, 128, 0.44);
   box-shadow:
     0 0 10px rgba(34, 197, 94, 0.24),
@@ -635,7 +748,11 @@ function handlePlayToggle() {
 
 .phase-bar.phase-final {
   color: #fff9e8;
-  background: linear-gradient(90deg, rgba(15, 136, 122, 0.92), rgba(234, 179, 8, 0.88));
+  background: linear-gradient(
+    90deg,
+    rgba(15, 136, 122, 0.92),
+    rgba(234, 179, 8, 0.88)
+  );
   border-color: rgba(250, 204, 21, 0.52);
   box-shadow:
     0 0 12px rgba(250, 204, 21, 0.26),
@@ -664,15 +781,20 @@ function handlePlayToggle() {
 
 @keyframes waterFlow {
   from {
-    background-position: 0 0, 0 0;
+    background-position:
+      0 0,
+      0 0;
   }
   to {
-    background-position: 0 0, 30px 0;
+    background-position:
+      0 0,
+      30px 0;
   }
 }
 
 @keyframes waterPulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.52;
     transform: translateX(-50%) scaleY(0.86);
   }
@@ -693,7 +815,7 @@ function handlePlayToggle() {
 }
 
 .playhead::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: -1px;
@@ -707,8 +829,11 @@ function handlePlayToggle() {
   display: flex;
   flex-direction: column;
   gap: 0;
-  background:
-    linear-gradient(to right, rgba(2, 124, 167, 0.1) 1px, transparent 1px);
+  background: linear-gradient(
+    to right,
+    rgba(2, 124, 167, 0.1) 1px,
+    transparent 1px
+  );
   background-size: 44px 100%;
 }
 
@@ -756,11 +881,21 @@ function handlePlayToggle() {
   transform: translateX(-50%) scale(1.12);
 }
 
-.event-movement { background: #00d6c9; }
-.event-detection { background: #6bc4ff; }
-.event-attack { background: #ff6b6b; }
-.event-damage { background: #ff9f1c; }
-.event-destruction { background: #ff3333; }
+.event-movement {
+  background: #00d6c9;
+}
+.event-detection {
+  background: #6bc4ff;
+}
+.event-attack {
+  background: #ff6b6b;
+}
+.event-damage {
+  background: #ff9f1c;
+}
+.event-destruction {
+  background: #ff3333;
+}
 
 .empty-state {
   display: flex;

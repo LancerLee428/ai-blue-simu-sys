@@ -10,13 +10,12 @@ import type {
 } from '../types/tactical-scenario';
 import { AiTacticalService } from '../services/ai-tactical';
 import { TacticalValidator } from '../services/tactical-validator';
-import { WordExporter } from '../services/word-exporter';
 import type { MapRenderer } from '../services/map-renderer';
 import type { ExecutionEngine } from '../services/execution-engine';
 import { normalizeTacticalScenario } from '../services/tactical-scenario-normalizer';
 import { useActionPlanStore } from './action-plan';
 
-const LLM_API_KEY = import.meta.env.VITE_LLM_API_KEY || '';
+type WordExporterInstance = import('../services/word-exporter').WordExporter;
 
 export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   // 状态
@@ -31,7 +30,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
 
   // AI 服务（延迟初始化）
   let aiService: AiTacticalService | null = null;
-  let wordExporter: WordExporter | null = null;
+  let wordExporter: WordExporterInstance | null = null;
 
   // 战术验证器
   const validator = new TacticalValidator();
@@ -59,16 +58,18 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
 
   function ensureAiService() {
     if (!aiService) {
-      if (!LLM_API_KEY) {
+      const llmApiKey = import.meta.env?.VITE_LLM_API_KEY || '';
+      if (!llmApiKey) {
         throw new Error('未配置 LLM API Key，请设置 VITE_LLM_API_KEY 环境变量');
       }
-      aiService = new AiTacticalService(LLM_API_KEY);
+      aiService = new AiTacticalService(llmApiKey);
     }
     return aiService;
   }
 
-  function ensureWordExporter() {
+  async function ensureWordExporter() {
     if (!wordExporter) {
+      const { WordExporter } = await import('../services/word-exporter');
       wordExporter = new WordExporter();
     }
     return wordExporter;
@@ -326,15 +327,6 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     currentScenario.value = normalizedScenario;
     hasUnsavedScenarioEdit.value = true;
 
-    try {
-      const actionPlanStore = useActionPlanStore();
-      if (actionPlanStore.activePlanId) {
-        actionPlanStore.updatePlanScenario(actionPlanStore.activePlanId, normalizedScenario);
-      }
-    } catch (err) {
-      console.error('Failed to update action plan scenario:', err);
-    }
-
     if (executionEngine && mapRenderer) {
       executionEngine.load(normalizedScenario);
       mapRenderer.renderScenario(normalizedScenario);
@@ -344,6 +336,15 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
   }
 
   function markScenarioSaved(message = '想定副本已保存') {
+    try {
+      const actionPlanStore = useActionPlanStore();
+      if (actionPlanStore.activePlanId && currentScenario.value) {
+        actionPlanStore.updatePlanScenario(actionPlanStore.activePlanId, currentScenario.value);
+      }
+    } catch (err) {
+      console.error('Failed to persist saved scenario to action plan:', err);
+    }
+
     hasUnsavedScenarioEdit.value = false;
     addSystemMessage(message);
   }
@@ -366,7 +367,7 @@ export const useTacticalScenarioStore = defineStore('tacticalScenario', () => {
     }
 
     try {
-      const exporter = ensureWordExporter();
+      const exporter = await ensureWordExporter();
       await exporter.exportToWord(currentScenario.value, thinkingChain.value);
       addSystemMessage('方案已导出为 Word 文档');
     } catch (err) {

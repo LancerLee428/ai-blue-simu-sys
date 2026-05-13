@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { js2xml, type Element as XmlElement } from 'xml-js';
 
 import { XmlScenarioExporter } from '../xml-scenario-exporter';
-import { moveScenarioEntityWithLinkedGeometry } from '../scenario-edit-service';
+import {
+  moveScenarioEntityWithLinkedGeometry,
+  updateScenarioRoutePointWithLinkedGeometry,
+  updateScenarioEntityWithLinkedGeometry,
+} from '../scenario-edit-service';
 import type { TacticalScenario } from '../../types/tactical-scenario';
 
 class TestTextNode {
@@ -222,4 +226,82 @@ test('edited scenario should export linked route and weapon trajectory XML', () 
   assert.match(xml, /<TrajectoryPoint index="3" role="impact" progress="1" longitude="124.2" latitude="26.1" altitude="100"\/>/);
   assert.match(xml, /<DetectionZone entityId="blue-radar" side="blue" radiusMeters="200000"/);
   assert.match(xml, /<Center longitude="124.2" latitude="26.1" altitude="100"\/>/);
+});
+
+test('updateScenarioEntityWithLinkedGeometry should rename entity and move linked geometry together', () => {
+  const moved = updateScenarioEntityWithLinkedGeometry(
+    createScenario(),
+    'blue-radar',
+    {
+      name: '蓝方雷达-精调',
+      position: { longitude: 124.3, latitude: 26.2, altitude: 120 },
+    },
+  );
+
+  const target = moved.forces[1].entities[0];
+  const zone = moved.detectionZones[0];
+  const trajectory = moved.strikeTasks[0].weaponTrajectory?.points ?? [];
+
+  assert.equal(target.name, '蓝方雷达-精调');
+  assert.deepEqual(target.position, { longitude: 124.3, latitude: 26.2, altitude: 120 });
+  assert.deepEqual(zone.center, { longitude: 124.3, latitude: 26.2, altitude: 120 });
+  assert.deepEqual(trajectory[3].position, { longitude: 124.3, latitude: 26.2, altitude: 120 });
+});
+
+test('updateScenarioRoutePointWithLinkedGeometry should sync entity position when editing route start point', () => {
+  const updated = updateScenarioRoutePointWithLinkedGeometry(
+    createScenario(),
+    0,
+    0,
+    { longitude: 120.8, latitude: 24.9, altitude: 9200 },
+  );
+  const scenario = updated.scenario;
+  const fighter = scenario.forces[0].entities[0];
+  const route = scenario.routes[0];
+  const trajectory = scenario.strikeTasks[0].weaponTrajectory?.points ?? [];
+
+  assert.equal(updated.entityPositionChanged, true);
+  assert.equal(updated.linkedLaunchPointsChanged, 0);
+  assert.deepEqual(fighter.position, { longitude: 120.8, latitude: 24.9, altitude: 9200 });
+  assert.deepEqual(route.points[0].position, { longitude: 120.8, latitude: 24.9, altitude: 9200 });
+  assert.deepEqual(route.points[1].position, { longitude: 122, latitude: 25.5, altitude: 10000 });
+  assert.deepEqual(trajectory[0].position, { longitude: 122, latitude: 25.5, altitude: 10000 });
+});
+
+test('updateScenarioRoutePointWithLinkedGeometry should sync missile launch point when editing route launch waypoint', () => {
+  const updated = updateScenarioRoutePointWithLinkedGeometry(
+    createScenario(),
+    0,
+    1,
+    { longitude: 122.25, latitude: 25.65, altitude: 10800 },
+  );
+  const scenario = updated.scenario;
+  const fighter = scenario.forces[0].entities[0];
+  const route = scenario.routes[0];
+  const trajectory = scenario.strikeTasks[0].weaponTrajectory?.points ?? [];
+  const fighterState = scenario.phases[0].entityStates.find(state => state.entityId === 'red-fighter');
+
+  assert.equal(updated.entityPositionChanged, false);
+  assert.equal(updated.linkedLaunchPointsChanged, 1);
+  assert.deepEqual(fighter.position, { longitude: 121, latitude: 25, altitude: 9000 });
+  assert.deepEqual(route.points[1].position, { longitude: 122.25, latitude: 25.65, altitude: 10800 });
+  assert.deepEqual(trajectory[0].position, { longitude: 122.25, latitude: 25.65, altitude: 10800 });
+  assert.deepEqual(trajectory[3].position, { longitude: 124, latitude: 26, altitude: 0 });
+  assert.deepEqual(fighterState?.position, { longitude: 122.25, latitude: 25.65, altitude: 10800 });
+});
+
+test('updateScenarioRoutePointWithLinkedGeometry should sync missile launch point by position when route timestamp is absent', () => {
+  const scenario = createScenario();
+  delete scenario.routes[0].points[1].timestamp;
+
+  const updated = updateScenarioRoutePointWithLinkedGeometry(
+    scenario,
+    0,
+    1,
+    { longitude: 122.35, latitude: 25.7, altitude: 11100 },
+  );
+  const trajectory = updated.scenario.strikeTasks[0].weaponTrajectory?.points ?? [];
+
+  assert.equal(updated.linkedLaunchPointsChanged, 1);
+  assert.deepEqual(trajectory[0].position, { longitude: 122.35, latitude: 25.7, altitude: 11100 });
 });

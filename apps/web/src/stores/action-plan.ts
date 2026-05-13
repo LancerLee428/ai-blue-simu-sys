@@ -20,11 +20,15 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
   // 状态
   const plans = ref<ActionPlan[]>([]);
   const activePlanId = ref<string | null>(null);
+  const scenarioDrafts = ref<Record<string, TacticalScenario>>({});
 
   // 计算属性
   const activePlan = computed(() => {
     if (!activePlanId.value) return null;
-    return plans.value.find(p => p.id === activePlanId.value) || null;
+    const plan = plans.value.find(p => p.id === activePlanId.value);
+    if (!plan) return null;
+    const draftScenario = scenarioDrafts.value[plan.id];
+    return draftScenario ? { ...plan, scenario: draftScenario } : plan;
   });
 
   // 创建新方案
@@ -62,6 +66,7 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
     const index = plans.value.findIndex(p => p.id === planId);
     if (index !== -1) {
       plans.value.splice(index, 1);
+      clearScenarioDraft(planId);
       if (activePlanId.value === planId) {
         activePlanId.value = plans.value[0]?.id || null;
       }
@@ -82,8 +87,23 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
     const plan = plans.value.find(p => p.id === planId);
     if (plan) {
       plan.scenario = scenario;
+      clearScenarioDraft(planId);
       saveToStorage();
     }
+  }
+
+  function updateActivePlanScenarioInMemory(scenario: TacticalScenario) {
+    if (!activePlanId.value) return;
+    scenarioDrafts.value = {
+      ...scenarioDrafts.value,
+      [activePlanId.value]: scenario,
+    };
+  }
+
+  function clearScenarioDraft(planId: string) {
+    if (!scenarioDrafts.value[planId]) return;
+    const { [planId]: _removed, ...nextDrafts } = scenarioDrafts.value;
+    scenarioDrafts.value = nextDrafts;
   }
 
   // 获取当前方案的执行状态
@@ -141,6 +161,7 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
     activatePlan,
     deletePlan,
     updatePlanScenario,
+    updateActivePlanScenarioInMemory,
     updateExecutionState,
     getExecutionState,
   };

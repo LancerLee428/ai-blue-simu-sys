@@ -89,6 +89,8 @@ export function calculateElevationDeg(from: GeoPosition, to: GeoPosition): numbe
 
 const DEFAULT_RADAR_TRACKING_TARGET_TYPES: RadarTrackingTargetType[] = ['enemy-aircraft', 'enemy-missile'];
 const DEFAULT_EW_TRACKING_TARGET_TYPES: ElectronicWarfareTrackingTargetType[] = ['enemy-aircraft', 'enemy-missile'];
+export const DEFAULT_RADAR_MAX_TRACKS = 12;
+export const DEFAULT_EW_MAX_TRACKS = 6;
 
 const RADAR_CAPABLE_ENTITY_TYPES = new Set([
   'air-aew',
@@ -153,6 +155,12 @@ function isElectronicWarfareTrackingTargetType(value: unknown): value is Electro
   return value === 'enemy-aircraft' || value === 'enemy-missile' || value === 'enemy-radar';
 }
 
+function normalizeTrackLimit(value: unknown, fallback: number): number {
+  const numeric = value === undefined || value === null ? fallback : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(1, Math.floor(numeric));
+}
+
 export function normalizeDegrees(degrees: number): number {
   return ((degrees % 360) + 360) % 360;
 }
@@ -165,7 +173,7 @@ export function normalizeRadarTrackingConfig(input: unknown): RadarTrackingConfi
   return {
     enabled: raw.enabled !== false,
     targetTypes: targetTypes.length > 0 ? targetTypes : [...DEFAULT_RADAR_TRACKING_TARGET_TYPES],
-    maxTracks: Math.max(1, Math.floor(Number(raw.maxTracks ?? 1) || 1)),
+    maxTracks: normalizeTrackLimit(raw.maxTracks, DEFAULT_RADAR_MAX_TRACKS),
   };
 }
 
@@ -181,7 +189,7 @@ export function normalizeElectronicWarfareConfig(input: unknown): ElectronicWarf
     trackingTargetTypes: trackingTargetTypes.length > 0
       ? trackingTargetTypes
       : [...DEFAULT_EW_TRACKING_TARGET_TYPES],
-    maxTracks: Math.max(1, Math.floor(Number(raw.maxTracks ?? 1) || 1)),
+    maxTracks: normalizeTrackLimit(raw.maxTracks, DEFAULT_EW_MAX_TRACKS),
     pulseEnabled: raw.pulseEnabled !== false,
     pulseColor: typeof raw.pulseColor === 'string' && raw.pulseColor
       ? raw.pulseColor
@@ -425,7 +433,7 @@ export function createElectronicSuppressionBeamLayers(args: {
   return [
     {
       idSuffix: 'core',
-      alpha: 0.16,
+      alpha: 0.07,
       azimuthWidthScale: 1,
       elevationWidthScale: 1,
       azimuthOffsetDeg: 0,
@@ -435,7 +443,7 @@ export function createElectronicSuppressionBeamLayers(args: {
     },
     {
       idSuffix: 'noise-a',
-      alpha: 0.1,
+      alpha: 0.045,
       azimuthWidthScale: 1.2,
       elevationWidthScale: 1.32,
       azimuthOffsetDeg: waveA * 2.6,
@@ -445,7 +453,7 @@ export function createElectronicSuppressionBeamLayers(args: {
     },
     {
       idSuffix: 'noise-b',
-      alpha: 0.07,
+      alpha: 0.03,
       azimuthWidthScale: 1.42,
       elevationWidthScale: 1.56,
       azimuthOffsetDeg: waveB * -3.2,
@@ -455,7 +463,7 @@ export function createElectronicSuppressionBeamLayers(args: {
     },
     {
       idSuffix: 'edge',
-      alpha: 0.22,
+      alpha: 0.1,
       azimuthWidthScale: 1.08,
       elevationWidthScale: 1.12,
       azimuthOffsetDeg: waveA * 0.8,

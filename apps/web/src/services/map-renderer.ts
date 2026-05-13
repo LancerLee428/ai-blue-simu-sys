@@ -15,6 +15,7 @@ import type {
   RuntimeVisualUpdate,
   EmitterVolume,
   ExplosionRuntimeState,
+  WeaponImpactEvent,
 } from '../types/tactical-scenario';
 import { FORCE_COLORS, getEntityPixelSize } from './cesium-graphics';
 import { getEntityShapeCanvas } from './entity-shape-icons';
@@ -39,6 +40,20 @@ import {
 } from './runtime-visual-math';
 import { buildRuntimeWeaponTrail } from './runtime-weapon-trail';
 import { resolveVisualModel, resolveWeaponVisualModel, type ResolvedVisualModel } from './visual-models';
+
+const SIDE_VISUALS: Record<ForceSide, {
+  label: Cesium.Color;
+  labelOutline: Cesium.Color;
+}> = {
+  red: {
+    label: Cesium.Color.fromCssColorString('#ff6b5f'),
+    labelOutline: Cesium.Color.fromCssColorString('#260606'),
+  },
+  blue: {
+    label: Cesium.Color.fromCssColorString('#6bb6ff'),
+    labelOutline: Cesium.Color.fromCssColorString('#05162e'),
+  },
+};
 
 export interface RuntimeVisualDebugOptions {
   staticDetectionVisible: boolean | null;
@@ -65,6 +80,8 @@ export class MapRenderer {
   private entityModelById = new Map<string, ResolvedVisualModel>();
   private entityHeadingById = new Map<string, number>();
   private weaponModelById = new Map<string, ResolvedVisualModel>();
+  private weaponTrailHistoryById = new Map<string, GeoPosition[]>();
+  private impactMarkerIds = new Set<string>();
   private explosionRenderer: ExplosionRenderer;
   private lastRuntimeVisualUpdate: RuntimeVisualUpdate | null = null;
   private debugExplosionFallbackPosition: GeoPosition | null = null;
@@ -103,6 +120,7 @@ export class MapRenderer {
     this.routeDecisions.clear();
     this.weaponIds.clear();
     this.staticDetectionIds.clear();
+    this.impactMarkerIds.clear();
     this.entityModelById.clear();
     this.entityHeadingById.clear();
     this.weaponModelById.clear();
@@ -112,7 +130,6 @@ export class MapRenderer {
     this.renderEntities(scenario);
     this.renderRoutes(scenario);
     this.renderDetectionZones(scenario.detectionZones);
-    this.renderStrikeTasks(scenario);
     this.renderOrbitTracks(scenario);
     this.lastRuntimeVisualUpdate = {
       virtualTimeMs: 0,
@@ -223,7 +240,9 @@ export class MapRenderer {
     this.entityModelById.clear();
     this.entityHeadingById.clear();
     this.weaponModelById.clear();
+    this.weaponTrailHistoryById.clear();
     this.staticDetectionIds.clear();
+    this.impactMarkerIds.clear();
     this.debugExplosionFallbackPosition = null;
   }
 
@@ -337,7 +356,7 @@ export class MapRenderer {
               ...(modelConfig.maximumScale !== undefined ? { maximumScale: modelConfig.maximumScale } : {}),
               heightReference: heightRef,
             },
-            label: this.createEntityLabel(entity, 42, heightRef),
+            label: this.createEntityLabel(entity, force.side, 42, heightRef),
           });
           (cesiumEntity as any).__tacticalLayer = true;
           (cesiumEntity as any).__originalColor = colors.primary;
@@ -372,7 +391,7 @@ export class MapRenderer {
             rotation: rotation,  // 图标旋转
             alignedAxis: Cesium.Cartesian3.UNIT_Z,  // 绕 Z 轴旋转
           },
-          label: this.createEntityLabel(entity, shapeCanvas.height, heightRef),
+          label: this.createEntityLabel(entity, force.side, shapeCanvas.height, heightRef),
         });
         (cesiumEntity as any).__tacticalLayer = true;
         (cesiumEntity as any).__originalColor = colors.primary;
@@ -386,18 +405,20 @@ export class MapRenderer {
 
   private createEntityLabel(
     entity: Pick<EntitySpec, 'name'>,
+    side: ForceSide,
     visualHeight: number,
     heightReference: Cesium.HeightReference,
   ): Cesium.LabelGraphics.ConstructorOptions {
+    const visual = SIDE_VISUALS[side];
     return {
       text: entity.name,
-      fillColor: Cesium.Color.WHITE,
+      fillColor: visual.label,
       font: '13px sans-serif',
       pixelOffset: new Cesium.Cartesian2(0, -(visualHeight / 2) - 6),
       heightReference,
       scale: 0.8,
-      outlineColor: Cesium.Color.BLACK,
-      outlineWidth: 2,
+      outlineColor: visual.labelOutline,
+      outlineWidth: 3,
       style: Cesium.LabelStyle.FILL_AND_OUTLINE,
     };
   }
@@ -450,8 +471,9 @@ export class MapRenderer {
    * P0 优化：减少视觉遮挡，突出实体图标
    */
   private renderDetectionZones(zones: DetectionZone[]): void {
-    zones.forEach((zone) => {
+    zones.forEach((zone, index) => {
       const colors = FORCE_COLORS[zone.side];
+      const ids = this.getStaticDetectionEntityIds(zone, index);
 
       const cx = zone.center.longitude;
       const cy = zone.center.latitude;
@@ -460,7 +482,7 @@ export class MapRenderer {
 
       // 地面投影圆（虚线边框 + 极淡填充）
       this.viewer.entities.add({
-        id: `detection-ground-${zone.entityId}`,
+        id: ids.ground,
         name: zone.label || '探测范围',
         position: Cesium.Cartesian3.fromDegrees(cx, cy, baseAlt),
         ellipse: {
@@ -484,11 +506,11 @@ export class MapRenderer {
           heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         },
       });
-      this.staticDetectionIds.add(`detection-ground-${zone.entityId}`);
+      this.staticDetectionIds.add(ids.ground);
 
       // 3D 半球体（仅边框轮廓，无填充）
       const hemiEntity = this.viewer.entities.add({
-        id: `detection-hemi-${zone.entityId}`,
+        id: ids.hemi,
         name: '探测半球',
         position: Cesium.Cartesian3.fromDegrees(cx, cy, baseAlt),
         ellipsoid: {
@@ -506,8 +528,25 @@ export class MapRenderer {
         },
       });
       (hemiEntity as any).__tacticalLayer = true;
-      this.staticDetectionIds.add(`detection-hemi-${zone.entityId}`);
+      this.staticDetectionIds.add(ids.hemi);
     });
+  }
+
+  private getStaticDetectionEntityIds(zone: DetectionZone, index: number): { ground: string; hemi: string } {
+    const suffix = this.getStaticDetectionZoneSuffix(zone, index);
+    return {
+      ground: `detection-ground-${zone.entityId}-${suffix}`,
+      hemi: `detection-hemi-${zone.entityId}-${suffix}`,
+    };
+  }
+
+  private getStaticDetectionZoneSuffix(zone: DetectionZone, index: number): string {
+    const label = zone.label
+      ?.trim()
+      .replace(/[^\u4e00-\u9fa5A-Za-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32);
+    return label || `zone-${index}`;
   }
 
   private syncWeapons(weapons: Weapon[]): void {
@@ -521,7 +560,12 @@ export class MapRenderer {
         currentPosition: weapon.currentPosition,
         samplesPerSegment: 10,
       });
-      const positions = trailPoints.map((point) =>
+      const mergedTrailPoints = this.mergeWeaponTrail(
+        this.weaponTrailHistoryById.get(weapon.id) ?? [],
+        trailPoints,
+      );
+      this.weaponTrailHistoryById.set(weapon.id, mergedTrailPoints);
+      const positions = mergedTrailPoints.map((point) =>
         Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, point.altitude)
       );
       const missilePosition = Cesium.Cartesian3.fromDegrees(
@@ -597,9 +641,36 @@ export class MapRenderer {
       this.viewer.entities.removeById(`${weaponId}-trail`);
       this.weaponIds.delete(weaponId);
       this.weaponModelById.delete(weaponId);
+      this.weaponTrailHistoryById.delete(weaponId);
     }
 
     weapons.forEach((weapon) => this.weaponIds.add(weapon.id));
+  }
+
+  private mergeWeaponTrail(previous: GeoPosition[], next: GeoPosition[]): GeoPosition[] {
+    if (previous.length === 0) return next.map(point => ({ ...point }));
+    if (next.length === 0) return previous.map(point => ({ ...point }));
+
+    const merged = previous.map(point => ({ ...point }));
+    const firstNext = next[0];
+    const existingStartIndex = merged.findIndex(point => this.isSameTrailPoint(point, firstNext));
+    const pointsToAppend = existingStartIndex >= 0 ? next.slice(1) : next;
+
+    pointsToAppend.forEach((point) => {
+      const previousPoint = merged[merged.length - 1];
+      if (!previousPoint || !this.isSameTrailPoint(previousPoint, point)) {
+        merged.push({ ...point });
+      }
+    });
+
+    const maxPoints = Math.max(32, Math.floor(this.visualEffects?.performance?.maxActiveTrails ?? 20) * 24);
+    return merged.slice(Math.max(0, merged.length - maxPoints));
+  }
+
+  private isSameTrailPoint(left: GeoPosition, right: GeoPosition): boolean {
+    return Math.abs(left.longitude - right.longitude) < 1e-8
+      && Math.abs(left.latitude - right.latitude) < 1e-8
+      && Math.abs(left.altitude - right.altitude) < 1e-3;
   }
 
   private resolveRuntimeWeaponModel(weapon: Weapon): ResolvedVisualModel | null {
@@ -686,8 +757,8 @@ export class MapRenderer {
         activeIds.add(baseId);
         this.upsertEmitterVolume(baseId, emitter, {
           rangeMeters: emitter.rangeMeters,
-          alpha: emitter.kind === 'radar' ? 0.12 : 0.16,
-          outlineAlpha: emitter.kind === 'radar' ? 0.35 : 0.62,
+          alpha: emitter.kind === 'radar' ? 0.08 : 0.07,
+          outlineAlpha: emitter.kind === 'radar' ? 0.22 : 0.3,
         });
       }
 
@@ -728,8 +799,8 @@ export class MapRenderer {
         activeIds.add(pulseId);
         this.upsertEmitterVolume(pulseId, emitter, {
           rangeMeters: Math.max(1, emitter.rangeMeters * progress),
-          alpha: Math.max(0, 0.28 * (1 - progress)),
-          outlineAlpha: Math.max(0, 0.9 * (1 - progress)),
+          alpha: Math.max(0, 0.12 * (1 - progress)),
+          outlineAlpha: Math.max(0, 0.35 * (1 - progress)),
         });
         pulseCount += 1;
       }
@@ -816,7 +887,7 @@ export class MapRenderer {
         modelMatrix,
         id,
         attributes: {
-          color: Cesium.ColorGeometryInstanceAttribute.fromColor(color.withAlpha(0.18)),
+          color: Cesium.ColorGeometryInstanceAttribute.fromColor(color.withAlpha(0.08)),
         },
       }),
       appearance: new Cesium.PerInstanceColorAppearance({
@@ -1086,58 +1157,55 @@ export class MapRenderer {
     });
     this.weaponIds.clear();
     this.weaponModelById.clear();
+    this.weaponTrailHistoryById.clear();
+    this.impactMarkerIds.forEach(id => this.viewer.entities.removeById(id));
+    this.impactMarkerIds.clear();
     this.setStaticDetectionVisible(true);
   }
 
   /**
-   * 渲染打击任务（目标位置放置红叉标记）
+   * 记录命中结果（只在运行时 weapon-impact 事件触发后显示）
    */
-  private renderStrikeTasks(scenario: TacticalScenario): void {
-    scenario.strikeTasks.forEach((task) => {
-      let targetPosition: GeoPosition | null = null;
-      for (const force of scenario.forces) {
-        const found = force.entities.find((e) => e.id === task.targetEntityId);
-        if (found) {
-          targetPosition = found.position;
-          break;
-        }
-      }
-      if (!targetPosition) return;
+  recordWeaponImpact(event: WeaponImpactEvent): void {
+    const markerId = `impact-${event.weaponId}`;
+    if (this.viewer.entities.getById(markerId)) return;
+    const hitPosition = event.hitPosition;
 
-      const entity = this.viewer.entities.add({
-        id: `strike-${task.id}`,
-        name: task.detail || `打击任务`,
-        position: Cesium.Cartesian3.fromDegrees(
-          targetPosition.longitude,
-          targetPosition.latitude,
-          targetPosition.altitude > 100 ? targetPosition.altitude : 0
-        ),
-        billboard: {
-          image: this.createStrikeMarkerCanvas(),
-          width: 32,
-          height: 32,
-          heightReference: targetPosition.altitude > 100
-            ? Cesium.HeightReference.NONE
-            : Cesium.HeightReference.CLAMP_TO_GROUND,
-          verticalOrigin: Cesium.VerticalOrigin.CENTER,
-        },
-        label: {
-          text: task.detail || '打击',
-          fillColor: Cesium.Color.fromCssColorString('#ff4444'),
-          font: '11px monospace',
-          pixelOffset: new Cesium.Cartesian2(0, 22),
-          scale: 0.85,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 2,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          heightReference: targetPosition.altitude > 100
-            ? Cesium.HeightReference.NONE
-            : Cesium.HeightReference.CLAMP_TO_GROUND,
-        },
-      });
-      (entity as any).__tacticalLayer = true;
-      (entity as any).__strikeTask = task;
+    const entity = this.viewer.entities.add({
+      id: markerId,
+      name: event.detail || '命中结果',
+      position: Cesium.Cartesian3.fromDegrees(
+        hitPosition.longitude,
+        hitPosition.latitude,
+        hitPosition.altitude > 100 ? hitPosition.altitude : 0,
+      ),
+      billboard: {
+        image: this.createStrikeMarkerCanvas(),
+        width: 32,
+        height: 32,
+        heightReference: hitPosition.altitude > 100
+          ? Cesium.HeightReference.NONE
+          : Cesium.HeightReference.CLAMP_TO_GROUND,
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      },
+      label: {
+        text: event.detail || '命中',
+        fillColor: Cesium.Color.fromCssColorString('#ff4444'),
+        font: '11px monospace',
+        pixelOffset: new Cesium.Cartesian2(0, 22),
+        scale: 0.85,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        heightReference: hitPosition.altitude > 100
+          ? Cesium.HeightReference.NONE
+          : Cesium.HeightReference.CLAMP_TO_GROUND,
+      },
     });
+    (entity as any).__tacticalLayer = true;
+    (entity as any).__impactEvent = event;
+    this.impactMarkerIds.add(markerId);
+    this.viewer.scene.requestRender();
   }
 
   /**
@@ -1318,7 +1386,7 @@ export class MapRenderer {
       maxSpan / 360 * earthCircumference / Math.cos(centerLat * Math.PI / 180),
       500000 // 最小 500km
     );
-    const range = Math.max(neededRange * 1.8, 500000); // 1.8x 余量
+    const range = Math.min(Math.max(neededRange * 1.8, 500000), 2_500_000); // 1.8x 余量，上限 2500km
 
     this.viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, range),

@@ -1,27 +1,27 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import * as Cesium from 'cesium';
-import { usePlatformStore } from '../stores/platform';
-import { useEntityState } from '../composables/useEntityState';
-import { useCommandSystem } from '../services/command-system';
-import { CreateEntityCommand } from '../services/command-system';
-import type { EntityConfig } from '../types/deployment';
-import TopToolbar from '../components/toolbar/TopToolbar.vue';
-import MapModule from '../components/map/MapModule.vue';
-import LeftPanelModule from '../components/left-panel/LeftPanelModule.vue';
-import RightPanelModule from '../components/right-panel/RightPanelModule.vue';
-import ResourceGraphModule from '../components/right-panel/ResourceGraphModule.vue';
-import DeploymentConfigModal from '../components/deployment/DeploymentConfigModal.vue';
-import LeftSidebar from '../components/left-sidebar/LeftSidebar.vue';
-import DecisionPanel from '../components/simulation/DecisionPanel.vue';
-import SimulationDrawer from '../components/simulation/SimulationDrawer.vue';
-import { MapRenderer } from '../services/map-renderer';
-import { ExecutionEngine } from '../services/execution-engine';
-import { moveScenarioEntityWithLinkedGeometry } from '../services/scenario-edit-service';
-import { useTacticalScenarioStore } from '../stores/tactical-scenario';
-import { useActionPlanStore } from '../stores/action-plan';
-import { usePanelState } from '../composables/usePanelState';
-import type { RouteDecision } from '../services/ai-decision-visualizer';
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
+import * as Cesium from "cesium";
+import { usePlatformStore } from "../stores/platform";
+import { useEntityState } from "../composables/useEntityState";
+import { useCommandSystem } from "../services/command-system";
+import { CreateEntityCommand } from "../services/command-system";
+import type { EntityConfig } from "../types/deployment";
+import TopToolbar from "../components/toolbar/TopToolbar.vue";
+import MapModule from "../components/map/MapModule.vue";
+import LeftPanelModule from "../components/left-panel/LeftPanelModule.vue";
+import RightPanelModule from "../components/right-panel/RightPanelModule.vue";
+import ResourceGraphModule from "../components/right-panel/ResourceGraphModule.vue";
+import DeploymentConfigModal from "../components/deployment/DeploymentConfigModal.vue";
+import LeftSidebar from "../components/left-sidebar/LeftSidebar.vue";
+import DecisionPanel from "../components/simulation/DecisionPanel.vue";
+import SimulationDrawer from "../components/simulation/SimulationDrawer.vue";
+import { MapRenderer } from "../services/map-renderer";
+import { ExecutionEngine } from "../services/execution-engine";
+import { moveScenarioEntityWithLinkedGeometry } from "../services/scenario-edit-service";
+import { useTacticalScenarioStore } from "../stores/tactical-scenario";
+import { useActionPlanStore } from "../stores/action-plan";
+import { usePanelState } from "../composables/usePanelState";
+import type { RouteDecision } from "../services/ai-decision-visualizer";
 
 const store = usePlatformStore();
 const tacticalStore = useTacticalScenarioStore();
@@ -190,22 +190,25 @@ onMounted(() => {
   store.bootstrap();
 });
 
-watch(() => actionPlanStore.activePlanId, (planId) => {
-  loadedRuntimePlanId.value = null;
-  runtimeRadarScanVisible.value = null;
-  runtimeJammingVisible.value = null;
-  runtimeExplosionVisible.value = null;
-  mapRendererRef.value?.setRuntimeVisualDebugOptions({
-    runtimeRadarScanVisible: null,
-    runtimeJammingVisible: null,
-    runtimeExplosionVisible: null,
-  });
-  executionEngineRef.value?.setRuntimeRadarEmitterDebugVisible(null);
-  executionEngineRef.value?.setRuntimeEWEmitterDebugVisible(null);
-  if (planId) {
-    syncActivePlanToRuntime({ flyTo: true });
-  }
-});
+watch(
+  () => actionPlanStore.activePlanId,
+  (planId) => {
+    loadedRuntimePlanId.value = null;
+    runtimeRadarScanVisible.value = null;
+    runtimeJammingVisible.value = null;
+    runtimeExplosionVisible.value = null;
+    mapRendererRef.value?.setRuntimeVisualDebugOptions({
+      runtimeRadarScanVisible: null,
+      runtimeJammingVisible: null,
+      runtimeExplosionVisible: null,
+    });
+    executionEngineRef.value?.setRuntimeRadarEmitterDebugVisible(null);
+    executionEngineRef.value?.setRuntimeEWEmitterDebugVisible(null);
+    if (planId) {
+      syncActivePlanToRuntime({ flyTo: true });
+    }
+  },
+);
 
 /**
  * 初始化战术引擎（Cesium viewer 就绪后调用）
@@ -261,7 +264,10 @@ function handleViewerReady(viewer: Cesium.Viewer) {
   engine.setOnProgressUpdate(({ currentTime, progress, currentPhaseIndex }) => {
     const activePlanId = actionPlanStore.activePlanId;
     if (activePlanId) {
-      actionPlanStore.updateExecutionState(activePlanId, { currentTime, currentPhaseIndex });
+      actionPlanStore.updateExecutionState(activePlanId, {
+        currentTime,
+        currentPhaseIndex,
+      });
     }
   });
 }
@@ -286,7 +292,7 @@ async function handleDeploymentConfirm(config: EntityConfig) {
     // 创建命令并执行
     const command = new CreateEntityCommand(
       { createEntity, updateEntity, deleteEntity },
-      config
+      config,
     );
     await execute(command);
 
@@ -294,9 +300,9 @@ async function handleDeploymentConfirm(config: EntityConfig) {
     showDeploymentModal.value = false;
     deploymentConfig.value = null;
 
-    console.log('实体部署成功');
+    console.log("实体部署成功");
   } catch (error) {
-    console.error('部署失败:', error);
+    console.error("部署失败:", error);
   }
 }
 
@@ -315,11 +321,12 @@ function handleUpdateEntityPosition(payload: {
   id: string;
   position: { longitude: number; latitude: number };
 }) {
-  const scenario = actionPlanStore.activePlan?.scenario ?? tacticalStore.currentScenario;
+  const scenario =
+    actionPlanStore.activePlan?.scenario ?? tacticalStore.currentScenario;
   if (scenario) {
     const entity = scenario.forces
-      .flatMap(force => force.entities)
-      .find(item => item.id === payload.id);
+      .flatMap((force) => force.entities)
+      .find((item) => item.id === payload.id);
 
     if (entity) {
       const nextScenario = moveScenarioEntityWithLinkedGeometry(
@@ -332,7 +339,11 @@ function handleUpdateEntityPosition(payload: {
         },
       );
       loadedRuntimePlanId.value = null;
-      tacticalStore.applyScenarioEdit(nextScenario, `实体 ${entity.name} 位置已更新，行动路线和导弹轨迹已同步`);
+      tacticalStore.applyScenarioEdit(
+        nextScenario,
+        `实体 ${entity.name} 位置已更新，行动路线和导弹轨迹已同步`,
+      );
+      actionPlanStore.updateActivePlanScenarioInMemory(nextScenario);
       syncExecutionStateFromEngine();
       return;
     }
@@ -344,20 +355,17 @@ function handleUpdateEntityPosition(payload: {
     currentPosition: {
       longitude: payload.position.longitude,
       latitude: payload.position.latitude,
-      altitude: 0
-    }
+      altitude: 0,
+    },
   });
 }
 
 /**
  * 处理实体状态更新
  */
-function handleUpdateEntityStatus(payload: {
-  id: string;
-  status: string;
-}) {
+function handleUpdateEntityStatus(payload: { id: string; status: string }) {
   updateEntity(payload.id, {
-    currentStatus: payload.status as any
+    currentStatus: payload.status as any,
   });
 }
 
@@ -365,13 +373,13 @@ function handleUpdateEntityStatus(payload: {
  * 转换为 ScenarioEntity 格式（兼容旧的接口）
  */
 const scenarioEntities = computed(() => {
-  return entities.value.map(entity => ({
+  return entities.value.map((entity) => ({
     id: entity.id,
     sourceEntityId: entity.sourceEntityId,
     name: entity.name,
     category: entity.category,
     currentPosition: entity.currentPosition,
-    currentStatus: entity.currentStatus
+    currentStatus: entity.currentStatus,
   }));
 });
 </script>
@@ -407,16 +415,20 @@ const scenarioEntities = computed(() => {
     <RightPanelModule />
 
     <Transition name="graph-modal">
-      <div v-if="resourceGraphOpen" class="graph-modal-layer" @click.self="closeResourceGraph">
+      <div
+        v-if="resourceGraphOpen"
+        class="graph-modal-layer"
+        @click.self="closeResourceGraph"
+      >
         <ResourceGraphModule modal @close="closeResourceGraph" />
       </div>
     </Transition>
 
     <!-- AI Decision Panel -->
-    <DecisionPanel
+    <!-- <DecisionPanel
       :selected-route-id="selectedRouteId"
       :decisions="routeDecisions"
-    />
+    /> -->
 
     <SimulationDrawer
       :open="showSimulationDrawer"
@@ -477,7 +489,9 @@ const scenarioEntities = computed(() => {
 
 .graph-modal-enter-active,
 .graph-modal-leave-active {
-  transition: opacity 0.24s ease, transform 0.24s ease;
+  transition:
+    opacity 0.24s ease,
+    transform 0.24s ease;
 }
 
 .graph-modal-enter-from,

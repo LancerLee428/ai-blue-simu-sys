@@ -32,6 +32,7 @@ import {
   shouldRenderRuntimeRadarScan,
   shouldShowStaticDetectionVolumesForStatus,
 } from '../runtime-visual-math';
+import { ElectronicWarfareManager } from '../electronic-warfare';
 import type { DetectionZone, EmitterVolume } from '../../types/tactical-scenario';
 
 function createRadarEmitter(position = { longitude: 121, latitude: 25, altitude: 9000, heading: 45 }): EmitterVolume {
@@ -104,13 +105,13 @@ test('getScenarioVirtualTimeMs should use a global virtual timeline across phase
   );
 });
 
-test('normalizeRadarTrackingConfig should default to enemy aircraft and missiles with one track', () => {
+test('normalizeRadarTrackingConfig should default to enemy aircraft and missiles with multiple tracks', () => {
   assert.deepEqual(
     normalizeRadarTrackingConfig(undefined),
     {
       enabled: true,
       targetTypes: ['enemy-aircraft', 'enemy-missile'],
-      maxTracks: 1,
+      maxTracks: 12,
     },
   );
 });
@@ -138,7 +139,7 @@ test('normalizeElectronicWarfareConfig should default area and tracking settings
       areaEnabled: true,
       trackingEnabled: true,
       trackingTargetTypes: ['enemy-aircraft', 'enemy-missile'],
-      maxTracks: 1,
+      maxTracks: 6,
       pulseEnabled: true,
       pulseColor: '#ff9f1c',
       pulseDurationMs: 2_200,
@@ -157,7 +158,7 @@ test('parseElectronicWarfareEffectAttributes should enable tracking for legacy X
     areaEnabled: true,
     trackingEnabled: true,
     trackingTargetTypes: ['enemy-aircraft', 'enemy-missile'],
-    maxTracks: 1,
+    maxTracks: 6,
     pulseEnabled: true,
     pulseColor: '#ff9f1c',
     pulseDurationMs: 2200,
@@ -282,6 +283,52 @@ test('selectRadarTrackingTargets should only keep enemy aircraft and enemy missi
   assert.deepEqual(targets.map(target => target.category), ['enemy-missile', 'enemy-aircraft']);
 });
 
+test('selectRadarTrackingTargets should track all in-range enemies up to the configured budget', () => {
+  const targets = selectRadarTrackingTargets({
+    radarSide: 'red',
+    radarPosition: { longitude: 100, latitude: 35, altitude: 0 },
+    rangeMeters: 500_000,
+    tracking: normalizeRadarTrackingConfig(undefined),
+    entities: [
+      {
+        id: 'blue-air-1',
+        side: 'blue',
+        type: 'air-fighter',
+        position: { longitude: 100.2, latitude: 35.1, altitude: 9000 },
+      },
+      {
+        id: 'blue-air-2',
+        side: 'blue',
+        type: 'air-multirole',
+        position: { longitude: 100.4, latitude: 35.2, altitude: 11000 },
+      },
+      {
+        id: 'red-air',
+        side: 'red',
+        type: 'air-fighter',
+        position: { longitude: 100.1, latitude: 35, altitude: 9000 },
+      },
+    ],
+    weapons: [
+      {
+        id: 'blue-missile-1',
+        launcherSide: 'blue',
+        currentPosition: { longitude: 100.3, latitude: 35.15, altitude: 5000 },
+      },
+      {
+        id: 'blue-missile-2',
+        launcherSide: 'blue',
+        currentPosition: { longitude: 100.5, latitude: 35.25, altitude: 7000 },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    new Set(targets.map(target => target.id)),
+    new Set(['blue-air-1', 'blue-air-2', 'blue-missile-1', 'blue-missile-2']),
+  );
+});
+
 test('selectElectronicWarfareTargets should keep enemy radar, missiles and aircraft inside jammer range', () => {
   const targets = selectElectronicWarfareTargets({
     jammerSide: 'blue',
@@ -328,6 +375,51 @@ test('selectElectronicWarfareTargets should keep enemy radar, missiles and aircr
 
   assert.deepEqual(targets.map(target => target.id), ['red-radar', 'red-missile', 'red-air']);
   assert.deepEqual(targets.map(target => target.category), ['enemy-radar', 'enemy-missile', 'enemy-aircraft']);
+});
+
+test('ElectronicWarfareManager should only degrade weapons launched by the opposing side', () => {
+  const manager = new ElectronicWarfareManager();
+  manager.registerJammer({
+    id: 'blue-ew',
+    name: '蓝方电子战车',
+    type: 'ground-ew',
+    side: 'blue',
+    position: { longitude: 121, latitude: 25, altitude: 0 },
+  });
+  manager.overrideJammerRadius('blue-ew', 200_000);
+
+  const base = {
+    weaponId: 'weapon-1',
+    weaponSpec: {
+      id: 'test-sam',
+      type: 'sam-long' as const,
+      name: '测试导弹',
+      guidance: 'active-radar' as const,
+      maxRange: 200_000,
+      minRange: 1_000,
+      cruiseSpeedMps: 1_000,
+      terminalSpeedMps: 1_200,
+      acceleration: 80,
+      turnRate: 20,
+      warheadWeight: 100,
+      killRadius: 40,
+      launchDelay: 0,
+      lockTime: 0,
+    },
+    launcherId: 'red-launcher',
+    targetEntityId: 'blue-target',
+    launchPosition: { longitude: 121.2, latitude: 25, altitude: 8000 },
+    targetPosition: { longitude: 121.1, latitude: 25, altitude: 0 },
+  };
+
+  assert.equal(manager.calculateWeaponInterference({
+    ...base,
+    launcherSide: 'blue',
+  }), null);
+  assert.equal(manager.calculateWeaponInterference({
+    ...base,
+    launcherSide: 'red',
+  })?.jammerId, 'blue-ew');
 });
 
 test('createRadarBeamMesh should build a pointed cone beam instead of a spherical slice', () => {
@@ -393,7 +485,9 @@ test('createElectronicSuppressionBeamLayers should describe a layered noisy jamm
   });
 
   assert.deepEqual(layers.map(layer => layer.idSuffix), ['core', 'noise-a', 'noise-b', 'edge']);
+  assert.deepEqual(layers.map(layer => layer.alpha), [0.07, 0.045, 0.03, 0.1]);
   assert.ok(layers[0].alpha > layers[1].alpha);
+  assert.ok(layers.every(layer => layer.alpha <= 0.1));
   assert.ok(layers[1].azimuthWidthScale > layers[0].azimuthWidthScale);
   assert.ok(layers[2].elevationWidthScale > layers[0].elevationWidthScale);
   assert.equal(layers[3].drawEdges, true);
@@ -625,6 +719,17 @@ test('isRadarDetectionEmitterSource should infer radar scanning from entity capa
       entityType: 'ground-ew',
       sensors: ['ew-suite'],
       label: '电子战覆盖范围',
+    }),
+    false,
+  );
+});
+
+test('isRadarDetectionEmitterSource should keep radar jamming zones out of radar scan emitters', () => {
+  assert.equal(
+    isRadarDetectionEmitterSource({
+      entityType: 'ground-radar',
+      sensors: ['radar'],
+      label: '红方雷达8-01 电子战干扰范围',
     }),
     false,
   );

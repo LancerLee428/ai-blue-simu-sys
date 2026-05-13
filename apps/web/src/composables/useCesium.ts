@@ -5,6 +5,13 @@ export function useCesium() {
   const viewer = shallowRef<Cesium.Viewer | null>(null);
   const isReady = ref(false);
 
+  async function createOfflineBaseLayer() {
+    const provider = await Cesium.TileMapServiceImageryProvider.fromUrl(
+      Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII'),
+    );
+    return new Cesium.ImageryLayer(provider);
+  }
+
   async function initViewer(container: HTMLElement) {
     if (viewer.value) return;
 
@@ -19,12 +26,8 @@ export function useCesium() {
       fullscreenButton: false,
       infoBox: false,
       selectionIndicator: false,
-      // 使用 OpenStreetMap 作为底图（不需要 API Key）
-      baseLayer: new Cesium.ImageryLayer(
-        new Cesium.OpenStreetMapImageryProvider({
-          url: 'https://a.tile.openstreetmap.org/',
-        })
-      ),
+      // 使用 Cesium 内置 NaturalEarthII 离线底图，避免内网环境请求外部瓦片导致地球黑屏。
+      baseLayer: await createOfflineBaseLayer(),
     });
 
     // 禁用光照效果

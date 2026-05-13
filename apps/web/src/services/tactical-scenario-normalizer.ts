@@ -28,6 +28,9 @@ import type {
   WeaponTrajectoryPlan,
   VisualModelConfig,
   VisualModelAlias,
+  FormationRoleMarker,
+  EquipmentGroup,
+  GroupMember,
 } from '../types/tactical-scenario';
 import { PLATFORM_META } from '../types/tactical-scenario';
 import {
@@ -55,6 +58,16 @@ function isPlatformType(value: unknown): value is PlatformType {
 
 function isVisualModelAlias(value: unknown): value is VisualModelAlias {
   return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+}
+
+function isFormationRoleMarker(value: unknown): value is FormationRoleMarker {
+  return value === 'L' || value === 'V' || value === 'C';
+}
+
+function normalizeFormationRoleMarker(value: unknown): FormationRoleMarker | undefined {
+  if (typeof value !== 'string') return undefined;
+  const marker = value.trim().toUpperCase();
+  return isFormationRoleMarker(marker) ? marker : undefined;
 }
 
 function normalizeVisualModelConfig(input: unknown): VisualModelConfig | undefined {
@@ -502,12 +515,62 @@ function normalizeInteractions(interactions: LooseRecord | undefined) {
   if (!interactions) return undefined;
 
   return {
-    groups: asArray(interactions.groups),
+    groups: asArray<LooseRecord>(interactions.groups)
+      .map(normalizeEquipmentGroup)
+      .filter((group): group is EquipmentGroup => group !== null),
     commandControl: asArray(interactions.commandControl),
     communications: asArray<LooseRecord>(interactions.communications)
       .map(normalizeCommunication)
       .filter((comm): comm is CommunicationLink => comm !== null),
     detectionLinks: asArray(interactions.detectionLinks),
+  };
+}
+
+function normalizeGroupMember(member: LooseRecord): GroupMember | null {
+  const equipRef = member.equipRef ?? member.id ?? member.entityId;
+  if (!equipRef) return null;
+  const formationRole = normalizeFormationRoleMarker(member.formationRole ?? member.marker);
+
+  return {
+    equipRef: String(equipRef),
+    ...(member.role ? { role: String(member.role) } : {}),
+    ...(member.categoryId ? { categoryId: String(member.categoryId) } : {}),
+    ...(member.categoryName ? { categoryName: String(member.categoryName) } : {}),
+    ...(formationRole ? { formationRole } : {}),
+  };
+}
+
+function normalizeEquipmentGroup(group: LooseRecord): EquipmentGroup | null {
+  if (!group) return null;
+  const id = group.id ? String(group.id) : '';
+  const name = group.name ? String(group.name) : id;
+  if (!id || !name) return null;
+
+  const side = isSide(group.side) ? group.side : undefined;
+  const type = group.type === 'category' ? 'category' : 'formation';
+  const formationRole = normalizeFormationRoleMarker(group.formationRole ?? group.marker);
+  const children = asArray<LooseRecord>(group.children)
+    .map(normalizeEquipmentGroup)
+    .filter((child): child is EquipmentGroup => child !== null);
+  const directMembers = asArray<LooseRecord>(group.members)
+    .map(normalizeGroupMember)
+    .filter((member): member is GroupMember => member !== null);
+  const childMembers = children.flatMap(child => child.members.map(member => ({
+    ...member,
+    categoryId: member.categoryId ?? child.id,
+    categoryName: member.categoryName ?? child.name,
+    formationRole: member.formationRole ?? child.formationRole,
+  })));
+
+  return {
+    id,
+    name,
+    ...(side ? { side } : {}),
+    type,
+    ...(group.role ? { role: String(group.role) } : {}),
+    ...(formationRole ? { formationRole } : {}),
+    members: [...directMembers, ...childMembers],
+    ...(children.length ? { children } : {}),
   };
 }
 
@@ -771,6 +834,7 @@ export function normalizeTacticalScenario(input: TacticalScenario): TacticalScen
           position: normalizePosition(entity.position),
           loadout: normalizeLoadout(entity),
           ...(visualModel ? { visualModel } : {}),
+          ...(normalizeFormationRoleMarker(entity.formationRole) ? { formationRole: normalizeFormationRoleMarker(entity.formationRole) } : {}),
           components: asArray(entity.components),
         };
       }),

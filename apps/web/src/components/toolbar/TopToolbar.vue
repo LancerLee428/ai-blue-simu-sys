@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { usePanelState, type RightPanelTab } from '../../composables/usePanelState';
-import ToolbarButton from './ToolbarButton.vue';
+import {
+  usePanelState,
+  type RightPanelTab,
+} from "../../composables/usePanelState";
+import ToolbarButton from "./ToolbarButton.vue";
 
 const {
   leftPanelOpen,
@@ -26,24 +29,24 @@ withDefaults(defineProps<Props>(), {
 });
 
 const emit = defineEmits<{
-  (e: 'undo'): void;
-  (e: 'redo'): void;
-  (e: 'toggle-simulation'): void;
+  (e: "undo"): void;
+  (e: "redo"): void;
+  (e: "toggle-simulation"): void;
 }>();
 
 function handleAIRightClick() {
-  if (rightPanelOpen.value && rightPanelActiveTab.value === 'ai') {
+  if (rightPanelOpen.value && rightPanelActiveTab.value === "ai") {
     toggleRightPanel();
   } else {
-    setRightPanelTab('ai' as RightPanelTab);
+    setRightPanelTab("ai" as RightPanelTab);
   }
 }
 
 function handleResourceRightClick() {
-  if (rightPanelOpen.value && rightPanelActiveTab.value === 'resource') {
+  if (rightPanelOpen.value && rightPanelActiveTab.value === "resource") {
     toggleRightPanel();
   } else {
-    setRightPanelTab('resource' as RightPanelTab);
+    setRightPanelTab("resource" as RightPanelTab);
   }
 }
 
@@ -54,29 +57,8 @@ function handleGraphRightClick() {
 
 <template>
   <!-- Left toolbar -->
-  <div class="toolbar toolbar--left">
-    <ToolbarButton :active="leftPanelOpen" icon="☰" @click="toggleLeftPanel">
-      对象
-    </ToolbarButton>
-  </div>
 
   <!-- Center toolbar - 撤销重做 -->
-  <div class="toolbar toolbar--center">
-    <ToolbarButton
-      :disabled="!canUndo"
-      icon="↩️"
-      @click="$emit('undo')"
-    >
-      撤销
-    </ToolbarButton>
-    <ToolbarButton
-      :disabled="!canRedo"
-      icon="↪️"
-      @click="$emit('redo')"
-    >
-      重做
-    </ToolbarButton>
-  </div>
 
   <!-- Right toolbar -->
   <div class="toolbar toolbar--right">
@@ -85,7 +67,7 @@ function handleGraphRightClick() {
       icon="▤"
       @click="emit('toggle-simulation')"
     >
-      仿真推演
+      方案推演
     </ToolbarButton>
     <ToolbarButton
       :active="rightPanelOpen && rightPanelActiveTab === 'ai'"

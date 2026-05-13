@@ -127,5 +127,7 @@ test('trajectory should keep nominal impact without interference and expose degr
 
   assert.deepEqual(nominal.adjustedTargetPosition, airTarget);
   assert.equal(nominal.statusHint, 'nominal');
+  assert.notDeepEqual(degraded.adjustedTargetPosition, airTarget);
+  assert.ok(degraded.adjustedTargetPosition.longitude > airTarget.longitude);
   assert.equal(degraded.statusHint, 'degraded');
 });

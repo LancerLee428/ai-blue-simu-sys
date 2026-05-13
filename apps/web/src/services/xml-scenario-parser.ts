@@ -44,6 +44,7 @@ import type {
   WeaponTrajectoryPointRole,
   VisualModelConfig,
   VisualModelAlias,
+  FormationRoleMarker,
 } from '../types/tactical-scenario';
 import type { PlatformType, ForceSide } from '../types/tactical-scenario';
 import { keplerianToGeodetic } from './orbit-calculator';
@@ -81,6 +82,18 @@ function parseOptionalAttrFloat(el: Element | null | undefined, attr: string): n
 
 function isVisualModelAlias(value: string | null | undefined): value is VisualModelAlias {
   return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+}
+
+function isFormationRoleMarker(value: string | null | undefined): value is FormationRoleMarker {
+  return value === 'L' || value === 'V' || value === 'C';
+}
+
+function parseFormationRoleMarker(eq: Element): FormationRoleMarker | undefined {
+  const marker = getAttrText(eq, 'formationRole')
+    || getAttrText(eq, 'formation')
+    || getText(eq, 'FormationRole');
+  const normalized = marker.toUpperCase();
+  return isFormationRoleMarker(normalized) ? normalized : undefined;
 }
 
 function parseVisualModelConfig(el: Element | null | undefined): VisualModelConfig | undefined {
@@ -275,6 +288,7 @@ function inferPlatformType(equipmentName: string, components: EquipmentComponent
   if (/(航母|carrier|出云|山东舰)/i.test(haystack)) return 'ship-carrier';
   if (/(驱逐舰|destroyer|055|摩耶)/i.test(haystack)) return 'ship-destroyer';
   if (/(潜艇|submarine|093|underwater)/i.test(haystack)) return 'ship-submarine';
+  if (/(ground-ew|电子战车|电子战压制系统)/i.test(haystack)) return 'ground-ew';
   if (/(歼-16d|jammer|电子战)/i.test(haystack)) return 'air-jammer';
   if (/(预警机|aew|e-2c)/i.test(haystack)) return 'air-aew';
   if (/(无人机|uav|攻击-11)/i.test(haystack)) return 'uav-strike';
@@ -306,6 +320,7 @@ function parseEquipments(doc: Document, tag: 'Participating' | 'Supporting'): En
       modelId,
       modelType: getText(eq, 'ModelType') || undefined,
       visualModel: parseVisualModelConfig(eq.querySelector(':scope > VisualModel')),
+      formationRole: parseFormationRoleMarker(eq),
       interfaceProtocol: getText(eq, 'InterfaceProtocol') || undefined,
       federateName: getText(eq, 'FederateName') || undefined,
       components,
@@ -596,7 +611,7 @@ function parseVisualEffects(doc: Document): VisualEffectsConfig | undefined {
       areaEnabled: getAttrText(ewEffectsEl, 'areaEnabled'),
       trackingEnabled: getAttrText(ewEffectsEl, 'trackingEnabled'),
       trackingTargetTypes: getAttrText(ewEffectsEl, 'trackingTargetTypes'),
-      maxTracks: getAttrFloat(ewEffectsEl, 'maxTracks') || 1,
+      maxTracks: getAttrFloat(ewEffectsEl, 'maxTracks') || undefined,
       pulseEnabled: getAttrText(ewEffectsEl, 'pulseEnabled'),
       pulseColor: getAttrText(ewEffectsEl, 'pulseColor'),
       pulseDurationMs: getAttrFloat(ewEffectsEl, 'pulseDurationMs') || 2200,
@@ -617,6 +632,60 @@ function parseVisualEffects(doc: Document): VisualEffectsConfig | undefined {
   };
 }
 
+function normalizeFormationRoleMarker(value: string | null | undefined): FormationRoleMarker | undefined {
+  const normalized = value?.trim().toUpperCase();
+  return isFormationRoleMarker(normalized) ? normalized : undefined;
+}
+
+function parseGroupMember(memberEl: Element, fallbackCategory?: EquipmentGroup): GroupMember {
+  const role = memberEl.getAttribute('role') ?? undefined;
+
+  return {
+    equipRef: memberEl.getAttribute('equipRef') ?? '',
+    role,
+    categoryId: memberEl.getAttribute('categoryId') ?? fallbackCategory?.id,
+    categoryName: memberEl.getAttribute('categoryName') ?? fallbackCategory?.name,
+    formationRole: normalizeFormationRoleMarker(
+      memberEl.getAttribute('formationRole')
+        ?? memberEl.getAttribute('marker')
+        ?? fallbackCategory?.formationRole,
+    ),
+  };
+}
+
+function parseGroupElement(groupEl: Element): EquipmentGroup {
+  const group: EquipmentGroup = {
+    id: groupEl.getAttribute('id') ?? '',
+    name: groupEl.getAttribute('name') ?? '',
+    side: isForceSide(groupEl.getAttribute('side')) ? groupEl.getAttribute('side') as ForceSide : undefined,
+    type: groupEl.getAttribute('type') === 'category' ? 'category' : 'formation',
+    role: groupEl.getAttribute('role') ?? undefined,
+    formationRole: normalizeFormationRoleMarker(
+      groupEl.getAttribute('formationRole') ?? groupEl.getAttribute('marker'),
+    ),
+    members: [],
+    children: [],
+  };
+
+  group.children = Array.from(groupEl.querySelectorAll(':scope > Group')).map(parseGroupElement);
+  const ownMembers = Array.from(groupEl.querySelectorAll(':scope > Member')).map(memberEl => parseGroupMember(memberEl));
+  const childMembers = group.children.flatMap(child => child.members.map(member => ({
+    ...member,
+    categoryId: member.categoryId ?? child.id,
+    categoryName: member.categoryName ?? child.name,
+    formationRole: member.formationRole ?? child.formationRole,
+  })));
+
+  group.members = [...ownMembers, ...childMembers];
+
+  if (!group.children.length) delete group.children;
+  if (!group.side) delete group.side;
+  if (!group.role) delete group.role;
+  if (!group.formationRole) delete group.formationRole;
+
+  return group;
+}
+
 function parseInteractions(doc: Document): InteractionConfig | undefined {
   const intEl = doc.querySelector('Interactions');
   if (!intEl) return undefined;
@@ -624,17 +693,7 @@ function parseInteractions(doc: Document): InteractionConfig | undefined {
   // Groups
   const groups: EquipmentGroup[] = Array.from(
     intEl.querySelectorAll('Groups > Group')
-  ).map(g => {
-    const members: GroupMember[] = Array.from(g.querySelectorAll('Member')).map(m => ({
-      equipRef: m.getAttribute('equipRef') ?? '',
-      role: m.getAttribute('role') ?? undefined,
-    }));
-    return {
-      id: g.getAttribute('id') ?? '',
-      name: g.getAttribute('name') ?? '',
-      members,
-    };
-  });
+  ).map(parseGroupElement);
 
   // CommandControl
   const commandControl: CommandControlLink[] = Array.from(
@@ -797,7 +856,7 @@ export function parseElectronicWarfareEffectAttributes(attributes: {
     areaEnabled: attributes.areaEnabled !== 'false',
     trackingEnabled: attributes.trackingEnabled !== 'false',
     trackingTargetTypes: attributes.trackingTargetTypes,
-    maxTracks: attributes.maxTracks ?? 1,
+    maxTracks: attributes.maxTracks,
     pulseEnabled: attributes.pulseEnabled !== 'false',
     pulseColor: attributes.pulseColor,
     pulseDurationMs: attributes.pulseDurationMs ?? 2_200,
@@ -851,7 +910,7 @@ export function parseDetectionZoneTrackingAttributes(attributes: {
   return normalizeRadarTrackingConfig({
     enabled: attributes.enabled !== 'false',
     targetTypes: attributes.targetTypes,
-    maxTracks: attributes.maxTracks ?? 1,
+    maxTracks: attributes.maxTracks,
   });
 }
 
@@ -862,7 +921,7 @@ function parseDetectionZoneTracking(zoneEl: Element): RadarTrackingConfig | unde
   return parseDetectionZoneTrackingAttributes({
     enabled: getAttrText(trackingEl, 'enabled'),
     targetTypes: getAttrText(trackingEl, 'targetTypes'),
-    maxTracks: getAttrFloat(trackingEl, 'maxTracks') || 1,
+    maxTracks: getAttrFloat(trackingEl, 'maxTracks') || undefined,
   });
 }
 

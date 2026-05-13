@@ -34,6 +34,7 @@ const { viewer, isReady, initViewer, destroyViewer } = useCesium();
 // 拖拽状态
 const dragModifierPressed = ref(false);
 const draggingEntity = ref<{ id: string; altitude: number } | null>(null);
+const scenarioEntityIds = new Set<string>();
 
 function setCameraInputsEnabled(enabled: boolean) {
   if (!viewer.value) return;
@@ -117,17 +118,20 @@ function detachDragKeyboardGuards() {
  */
 function upsertEntities() {
   if (!viewer.value) return;
-  viewer.value.entities.removeAll();
+  scenarioEntityIds.forEach(id => viewer.value?.entities.removeById(id));
+  scenarioEntityIds.clear();
 
   // 只渲染 AI 生成的方案实体，不使用测试数据
   const entitiesToRender = props.entities;
 
   entitiesToRender.forEach((entity) => {
     const graphics = getEntityGraphics(entity);
-    viewer.value!.entities.add({
+    const cesiumEntity = viewer.value!.entities.add({
       id: entity.id,
       ...graphics,
     });
+    (cesiumEntity as any).__deploymentLayer = true;
+    scenarioEntityIds.add(entity.id);
   });
 
   // 高亮选中的实体

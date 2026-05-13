@@ -54,6 +54,23 @@ function interpolatePosition(from: GeoPosition, to: GeoPosition, t: number): Geo
   };
 }
 
+function offsetMetersToDegrees(
+  origin: GeoPosition,
+  lateralOffsetMeters: number,
+  verticalOffsetMeters: number,
+): GeoPosition {
+  const metersPerLatitudeDegree = 111_320;
+  const latitudeRadians = origin.latitude * Math.PI / 180;
+  const metersPerLongitudeDegree = Math.max(1, metersPerLatitudeDegree * Math.cos(latitudeRadians));
+
+  return {
+    ...origin,
+    longitude: origin.longitude + lateralOffsetMeters / metersPerLongitudeDegree,
+    latitude: origin.latitude + lateralOffsetMeters * 0.35 / metersPerLatitudeDegree,
+    altitude: Math.max(0, origin.altitude + verticalOffsetMeters),
+  };
+}
+
 function normalizeKeyPoints(keyPoints: WeaponTrajectoryKeyPoint[] | undefined): NormalizedTrajectoryPoint[] {
   const points = (keyPoints ?? [])
     .filter(point => point.position)
@@ -178,14 +195,26 @@ export function buildWeaponTrajectory(input: WeaponTrajectoryInput): WeaponTraje
   const sampleCount = Math.max(2, Math.floor(input.sampleCount));
   const keyPoints = normalizeKeyPoints(input.keyPoints);
   const interpolation = input.interpolation ?? 'catmull-rom';
-  const adjustedTargetPosition = keyPoints.length >= 2
+  const nominalTargetPosition = keyPoints.length >= 2
     ? { ...keyPoints[keyPoints.length - 1].position }
     : { ...input.targetPosition };
+  const adjustedTargetPosition = input.interference
+    ? offsetMetersToDegrees(
+      nominalTargetPosition,
+      input.interference.lateralOffsetMeters,
+      input.interference.verticalOffsetMeters,
+    )
+    : nominalTargetPosition;
+  const adjustedKeyPoints = keyPoints.length >= 2 && input.interference
+    ? keyPoints.map((point, index) => index === keyPoints.length - 1
+      ? { ...point, position: adjustedTargetPosition }
+      : point)
+    : keyPoints;
 
   const trajectory = Array.from({ length: sampleCount }, (_, index) => {
     const sampleT = sampleCount === 1 ? progress : (progress * index) / (sampleCount - 1);
-    if (keyPoints.length >= 2) {
-      return sampleKeyPoints(keyPoints, sampleT, interpolation);
+    if (adjustedKeyPoints.length >= 2) {
+      return sampleKeyPoints(adjustedKeyPoints, sampleT, interpolation);
     }
     if (sampleT <= 0) return { ...input.launchPosition };
     if (sampleT >= 1) return { ...adjustedTargetPosition };

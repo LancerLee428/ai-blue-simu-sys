@@ -14,6 +14,7 @@ import type {
   InstructionSeqConfig,
   EnvironmentConfig,
   InteractionConfig,
+  EquipmentGroup,
   ScenarioMetadata,
   Route,
   DetectionZone,
@@ -210,6 +211,7 @@ function exportEquipment(doc: Document, entity: EntitySpec): Element {
   eqEl.appendChild(el(doc, 'Name', entity.name));
   if (entity.modelId) eqEl.appendChild(el(doc, 'ModelId', entity.modelId));
   if (entity.modelType) eqEl.appendChild(el(doc, 'ModelType', entity.modelType));
+  if (entity.formationRole) eqEl.appendChild(el(doc, 'FormationRole', entity.formationRole));
   if (entity.visualModel) eqEl.appendChild(elAttr(doc, 'VisualModel', getVisualModelAttributes(entity.visualModel)));
   if (entity.interfaceProtocol) eqEl.appendChild(el(doc, 'InterfaceProtocol', entity.interfaceProtocol));
   if (entity.federateName) eqEl.appendChild(el(doc, 'FederateName', entity.federateName));
@@ -544,11 +546,7 @@ function exportInteractions(doc: Document, root: Element, interactions: Interact
   if (interactions.groups?.length) {
     const groupsEl = doc.createElement('Groups');
     for (const g of interactions.groups) {
-      const gEl = elAttr(doc, 'Group', { id: g.id, name: g.name });
-      for (const m of g.members) {
-        gEl.appendChild(elAttr(doc, 'Member', { equipRef: m.equipRef, ...(m.role ? { role: m.role } : {}) }));
-      }
-      groupsEl.appendChild(gEl);
+      groupsEl.appendChild(exportGroup(doc, g));
     }
     intEl.appendChild(groupsEl);
   }
@@ -594,6 +592,45 @@ function exportInteractions(doc: Document, root: Element, interactions: Interact
   }
 
   root.appendChild(intEl);
+}
+
+function exportGroup(doc: Document, group: EquipmentGroup): Element {
+  const groupEl = elAttr(doc, 'Group', {
+    id: group.id,
+    name: group.name,
+    ...(group.side ? { side: group.side } : {}),
+    ...(group.type ? { type: group.type } : {}),
+    ...(group.role ? { role: group.role } : {}),
+    ...(group.formationRole ? { formationRole: group.formationRole } : {}),
+  });
+
+  if (group.children?.length) {
+    for (const child of group.children) {
+      groupEl.appendChild(exportGroup(doc, child));
+    }
+    const childMemberRefs = new Set(group.children.flatMap(child => child.members.map(member => member.equipRef)));
+    const directMembers = group.members.filter(member => !childMemberRefs.has(member.equipRef));
+    for (const member of directMembers) {
+      groupEl.appendChild(exportGroupMember(doc, member));
+    }
+    return groupEl;
+  }
+
+  for (const member of group.members) {
+    groupEl.appendChild(exportGroupMember(doc, member));
+  }
+
+  return groupEl;
+}
+
+function exportGroupMember(doc: Document, member: EquipmentGroup['members'][number]): Element {
+  return elAttr(doc, 'Member', {
+    equipRef: member.equipRef,
+    ...(member.role ? { role: member.role } : {}),
+    ...(member.categoryId ? { categoryId: member.categoryId } : {}),
+    ...(member.categoryName ? { categoryName: member.categoryName } : {}),
+    ...(member.formationRole ? { formationRole: member.formationRole } : {}),
+  });
 }
 
 function exportRoutes(doc: Document, root: Element, routes: Route[]) {

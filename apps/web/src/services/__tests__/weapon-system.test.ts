@@ -152,6 +152,36 @@ test('Weapon database should cover every weapon id used by the example XML', () 
   assert.deepEqual(missingWeaponIds, []);
 });
 
+test('Example XML strike plan should use one red aircraft standoff attack, four red launched missiles and two blue launched missiles', () => {
+  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+  const attackers = Array.from(
+    xml.matchAll(/<StrikeTask[^>]*attackerEntityId="([^"]+)"/g),
+    match => match[1],
+  );
+
+  assert.deepEqual(
+    attackers.filter(id => id.startsWith('red-')),
+    [
+      'red-g01-air-03',
+      'red-g02-missile-01',
+      'red-g04-missile-01',
+      'red-g05-missile-01',
+      'red-g09-missile-01',
+    ],
+  );
+
+  assert.match(xml, /<Route entityId="red-g01-air-03"[^>]*>/);
+  assert.match(xml, /<StrikeTask id="strike-red-g01-air3-blue-platform1" attackerEntityId="red-g01-air-03"/);
+  assert.match(xml, /<Event type="attack" timestamp="16" sourceEntityId="red-g01-air-03"/);
+  assert.deepEqual(
+    attackers.filter(id => id.startsWith('blue-')),
+    [
+      'blue-g01-missile2-01',
+      'blue-g02-missile3-01',
+    ],
+  );
+});
+
 test('WeaponSystem should not silently fallback when an attacker only has unknown weapons', () => {
   const scenario = createScenario();
   const phase = scenario.phases[0];
@@ -345,4 +375,58 @@ test('WeaponSystem should emit manual trajectory impact point as hit position', 
   });
 
   assert.deepEqual(evaluation.impacts[0].hitPosition, manualImpact);
+});
+
+test('WeaponSystem should apply electronic interference to weapon impact reports', () => {
+  const scenario = createScenario();
+  const phase = scenario.phases[0];
+  const weaponSystem = new WeaponSystem();
+  phase.events[0].weaponTrajectory = {
+    mode: 'manual',
+    interpolation: 'catmull-rom',
+    points: [
+      { role: 'launch', progress: 0, position: { longitude: 121, latitude: 25, altitude: 8000 } },
+      { role: 'cruise', progress: 0.5, position: { longitude: 121.12, latitude: 25.02, altitude: 12000 } },
+      { role: 'impact', progress: 1, position: { longitude: 121.25, latitude: 25, altitude: 0 } },
+    ],
+  };
+
+  const impactTimeMs = weaponSystem.estimateImpactTimeMs({
+    scenario,
+    phase,
+    attackEvent: phase.events[0],
+    getEntityPositionAtTime(entityId) {
+      const entity = scenario.forces.flatMap((force) => force.entities).find((item) => item.id === entityId);
+      assert.ok(entity, `missing entity: ${entityId}`);
+      return entity.position;
+    },
+  });
+
+  const evaluation = weaponSystem.evaluatePhase({
+    scenario,
+    phase,
+    previousTimeMs: impactTimeMs - 100,
+    currentTimeMs: impactTimeMs + 100,
+    getEntityPositionAtTime(entityId) {
+      const entity = scenario.forces.flatMap((force) => force.entities).find((item) => item.id === entityId);
+      assert.ok(entity, `missing entity: ${entityId}`);
+      return entity.position;
+    },
+    getWeaponInterference() {
+      return {
+        weaponId: 'weapon-test',
+        jammerId: 'blue-ew-1',
+        strength: 0.5,
+        guidanceImpact: 'terminal-deviation',
+        lateralOffsetMeters: 500,
+        verticalOffsetMeters: 30,
+        hitProbabilityScale: 0.65,
+      };
+    },
+  });
+
+  assert.equal(evaluation.impacts.length, 1);
+  assert.equal(evaluation.impacts[0].interference?.jammerId, 'blue-ew-1');
+  assert.match(evaluation.impacts[0].detail, /干扰/);
+  assert.notDeepEqual(evaluation.impacts[0].hitPosition, phase.events[0].weaponTrajectory.points[2].position);
 });

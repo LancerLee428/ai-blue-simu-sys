@@ -25,6 +25,16 @@ npm run build          # 构建前端（包含类型检查）
 npm run typecheck      # 类型检查
 ```
 
+### 测试
+测试使用 Node.js 原生 `node:test` 框架，通过 `tsx` 运行（支持 TypeScript）。
+```bash
+# 运行单个测试文件
+npx tsx --test apps/web/src/services/__tests__/<test-file>.test.ts
+
+# 运行所有服务层测试
+npx tsx --test apps/web/src/services/__tests__/*.test.ts
+```
+
 ### 后端开发
 ```bash
 cd apps/server
@@ -127,6 +137,20 @@ Cesium 地图渲染引擎，负责将战术场景可视化。
 **关键依赖**:
 - Cesium `ParticleSystem` 依赖 `viewer.clock` tick 来推进粒子时间。时钟不 tick，粒子不发射。
 - 必须在 `useCesium.ts` 里设置 `clock.shouldAnimate = true`、`clock.canAnimate = true`、`clock.clockRange = UNBOUNDED`，并在 `scene.preRender` 里强制保持时钟运行（防止 Cesium 内部逻辑停止时钟）。
+
+#### ElectronicWarfareManager (`apps/web/src/services/electronic-warfare.ts`)
+电子战效果管理器，处理干扰机压制和雷达干扰效果。
+
+**关键设计**:
+- 注册干扰机实体后，在 `evaluateJammingEffect()` 中判断目标武器是否在干扰区内
+- 干扰效果影响武器制导精度（`WeaponGuidanceImpact`）和干扰状态（`WeaponInterferenceState`）
+
+#### FormationTree (`apps/web/src/services/formation-tree.ts`)
+编组树构建器，将场景实体按阵营和编组角色组织为树形结构。
+
+**关键设计**:
+- `buildFormationTree(scenario, actionPlan)` 返回 `FormationGroupNode[]`，每个节点包含阵营、编组分类和成员列表
+- 当 ActionPlan 中的编组元数据丢失时，回退到按阵营实体类别分组
 
 #### 状态管理 (Pinia Stores)
 

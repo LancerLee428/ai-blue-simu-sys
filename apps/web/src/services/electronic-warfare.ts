@@ -1,5 +1,12 @@
 // apps/web/src/services/electronic-warfare.ts
-import type { EntitySpec, DetectionZone, GeoPosition } from '../types/tactical-scenario';
+import type {
+  EntitySpec,
+  DetectionZone,
+  GeoPosition,
+  WeaponGuidanceImpact,
+  WeaponInterferenceState,
+  WeaponSpec,
+} from '../types/tactical-scenario';
 
 /**
  * 电子战效果管理器
@@ -16,13 +23,14 @@ export class ElectronicWarfareManager {
    * 注册电子战机干扰区域
    */
   registerJammer(entity: EntitySpec): void {
-    if (!this.isJammerPlatform(entity.type)) return;
+    if (!this.isJammerPlatform(entity)) return;
 
     const jammerZone: JammerZone = {
       entityId: entity.id,
+      side: entity.side,
       position: entity.position,
-      radius: this.getJammerRadius(entity.type),
-      power: this.getJammerPower(entity.type),
+      radius: this.getJammerRadius(entity),
+      power: this.getJammerPower(entity),
       active: true,
     };
 
@@ -110,6 +118,55 @@ export class ElectronicWarfareManager {
       }));
   }
 
+  calculateWeaponInterference(args: {
+    weaponId: string;
+    weaponSpec: WeaponSpec;
+    launcherId: string;
+    launcherSide?: string | null;
+    targetEntityId: string;
+    launchPosition: GeoPosition;
+    targetPosition: GeoPosition;
+  }): WeaponInterferenceState | null {
+    let strongest: {
+      zone: JammerZone;
+      distance: number;
+      strength: number;
+    } | null = null;
+
+    for (const zone of this.jammerZones.values()) {
+      if (!zone.active) continue;
+      if (zone.entityId === args.launcherId) continue;
+      if (args.launcherSide && zone.side === args.launcherSide) continue;
+
+      const targetDistance = this.calculateDistance(args.targetPosition, zone.position);
+      const launchDistance = this.calculateDistance(args.launchPosition, zone.position);
+      const distance = Math.min(targetDistance, launchDistance);
+      if (distance > zone.radius) continue;
+
+      const strength = Math.max(0, Math.min(1, zone.power * (1 - distance / zone.radius)));
+      if (!strongest || strength > strongest.strength) {
+        strongest = { zone, distance, strength };
+      }
+    }
+
+    if (!strongest || strongest.strength < 0.08) return null;
+
+    const guidanceImpact = this.resolveGuidanceImpact(args.weaponSpec.guidance, strongest.strength);
+    const offsetScale = args.weaponSpec.type.startsWith('sam') ? 1.35 : 1;
+    const lateralOffsetMeters = Math.round((260 + args.weaponSpec.cruiseSpeedMps * 0.18) * strongest.strength * offsetScale);
+    const verticalOffsetMeters = Math.round((60 + args.targetPosition.altitude * 0.015) * strongest.strength);
+
+    return {
+      weaponId: args.weaponId,
+      jammerId: strongest.zone.entityId,
+      strength: Number(strongest.strength.toFixed(3)),
+      guidanceImpact,
+      lateralOffsetMeters,
+      verticalOffsetMeters,
+      hitProbabilityScale: Number(Math.max(0.25, 1 - strongest.strength * 0.65).toFixed(3)),
+    };
+  }
+
   /**
    * 激活/停用干扰机
    */
@@ -120,30 +177,47 @@ export class ElectronicWarfareManager {
     }
   }
 
-  private isJammerPlatform(type: string): boolean {
-    return type === 'air-jammer' || type === 'ground-ew';
+  private isJammerPlatform(entity: EntitySpec): boolean {
+    return entity.type === 'air-jammer'
+      || entity.type === 'ground-ew'
+      || this.hasElectronicWarfareCapability(entity);
   }
 
-  private getJammerRadius(type: string): number {
-    switch (type) {
+  private hasElectronicWarfareCapability(entity: EntitySpec): boolean {
+    return entity.loadout?.sensors?.some((sensor) => {
+      const normalized = sensor.toLowerCase();
+      return normalized.includes('ew') || normalized.includes('jammer') || sensor.includes('干扰');
+    }) ?? false;
+  }
+
+  private getJammerRadius(entity: EntitySpec): number {
+    switch (entity.type) {
       case 'air-jammer':
         return 150000; // 150km 干扰半径
       case 'ground-ew':
         return 80000; // 80km 干扰半径
       default:
-        return 50000;
+        return this.hasElectronicWarfareCapability(entity) ? 80000 : 50000;
     }
   }
 
-  private getJammerPower(type: string): number {
-    switch (type) {
+  private getJammerPower(entity: EntitySpec): number {
+    switch (entity.type) {
       case 'air-jammer':
         return 0.8; // 80% 干扰强度
       case 'ground-ew':
         return 0.6; // 60% 干扰强度
       default:
-        return 0.5;
+        return this.hasElectronicWarfareCapability(entity) ? 0.6 : 0.5;
     }
+  }
+
+  private resolveGuidanceImpact(guidance: string, strength: number): WeaponGuidanceImpact {
+    if (strength >= 0.62) return 'lock-break';
+    if (guidance === 'active-radar' || guidance === 'semi-active' || guidance === 'passive-radar') {
+      return strength >= 0.35 ? 'terminal-deviation' : 'tracking-noise';
+    }
+    return 'tracking-noise';
   }
 
   private calculateDistance(pos1: GeoPosition, pos2: GeoPosition): number {
@@ -164,6 +238,7 @@ export class ElectronicWarfareManager {
 
 interface JammerZone {
   entityId: string;
+  side: string;
   position: GeoPosition;
   radius: number;
   power: number;

@@ -4,6 +4,7 @@ import type {
   TacticalEvent,
   TacticalScenario,
   Weapon,
+  WeaponInterferenceState,
   WeaponImpactEvent,
   WeaponLaunchEvent,
   WeaponRuntimeConfig,
@@ -57,6 +58,7 @@ function toImpactEvent(
   weaponId: string,
   weaponSpec: WeaponSpec,
   hitPosition: GeoPosition,
+  interference?: WeaponInterferenceState,
 ): WeaponImpactEvent {
   return {
     ...attackEvent,
@@ -66,7 +68,10 @@ function toImpactEvent(
     hitPosition,
     damage: Math.round(weaponSpec.warheadWeight * 10),
     weaponType: weaponSpec.type,
-    detail: `${weaponSpec.name} 命中 ${attackEvent.targetEntityId ?? '目标'}`,
+    detail: interference
+      ? `${weaponSpec.name} 受 ${interference.jammerId} 干扰，落点偏移 ${Math.round(interference.lateralOffsetMeters)}m`
+      : `${weaponSpec.name} 命中 ${attackEvent.targetEntityId ?? '目标'}`,
+    ...(interference ? { interference } : {}),
   };
 }
 
@@ -90,12 +95,28 @@ export interface WeaponSystemEntityPositionResolver {
   (entityId: string, timeMs?: number): GeoPosition | null;
 }
 
+export interface WeaponInterferenceResolverArgs {
+  weaponId: string;
+  weaponSpec: WeaponSpec;
+  launcherId: string;
+  launcherSide?: string | null;
+  targetEntityId: string;
+  launchPosition: GeoPosition;
+  targetPosition: GeoPosition;
+  currentTimeMs: number;
+}
+
+export interface WeaponInterferenceResolver {
+  (args: WeaponInterferenceResolverArgs): WeaponInterferenceState | null;
+}
+
 export interface WeaponPhaseContext {
   scenario: TacticalScenario;
   phase: Phase;
   previousTimeMs: number;
   currentTimeMs: number;
   getEntityPositionAtTime: WeaponSystemEntityPositionResolver;
+  getWeaponInterference?: WeaponInterferenceResolver;
   runtimeConfig?: WeaponRuntimeConfig;
 }
 
@@ -171,6 +192,16 @@ export class WeaponSystem {
         getEntityPositionAtTime: context.getEntityPositionAtTime,
         runtimeConfig: context.runtimeConfig,
       });
+      const interference = context.getWeaponInterference?.({
+        weaponId,
+        weaponSpec,
+        launcherId: attacker.id,
+        launcherSide: attacker.side,
+        targetEntityId: target.id,
+        launchPosition,
+        targetPosition,
+        currentTimeMs: context.currentTimeMs,
+      }) ?? undefined;
 
       if (context.previousTimeMs < launchTimeMs && context.currentTimeMs >= launchTimeMs) {
         launches.push(toLaunchEvent(attackEvent, weaponId, weaponSpec));
@@ -188,6 +219,7 @@ export class WeaponSystem {
           launchTimeMs,
           impactTimeMs,
           currentTimeMs: inFlightEnd,
+          interference,
         });
         weapons.push(weapon);
       }
@@ -201,8 +233,15 @@ export class WeaponSystem {
           sampleCount: 3,
           keyPoints: resolveTrajectoryKeyPoints(attackEvent.weaponTrajectory?.points, launchPosition),
           interpolation: attackEvent.weaponTrajectory?.interpolation,
+          interference,
         });
-        impacts.push(toImpactEvent(attackEvent, weaponId, weaponSpec, trajectoryResult.adjustedTargetPosition));
+        impacts.push(toImpactEvent(
+          attackEvent,
+          weaponId,
+          weaponSpec,
+          trajectoryResult.adjustedTargetPosition,
+          interference,
+        ));
       }
     }
 
@@ -218,6 +257,7 @@ export class WeaponSystem {
     launchTimeMs: number;
     impactTimeMs: number;
     currentTimeMs: number;
+    interference?: WeaponInterferenceState;
   }): Weapon {
     const durationMs = Math.max(args.impactTimeMs - args.launchTimeMs, 1);
     const progress = clamp((args.currentTimeMs - args.launchTimeMs) / durationMs, 0, 1);
@@ -230,6 +270,7 @@ export class WeaponSystem {
       sampleCount,
       keyPoints: resolveTrajectoryKeyPoints(args.attackEvent.weaponTrajectory?.points, args.launchPosition),
       interpolation: args.attackEvent.weaponTrajectory?.interpolation,
+      interference: args.interference,
     });
 
     return {
@@ -250,6 +291,7 @@ export class WeaponSystem {
       status: getWeaponStatus(progress),
       trajectory: trajectoryResult.trajectory,
       fuelRemaining: clamp(1 - progress, 0, 1),
+      ...(args.interference ? { interference: args.interference } : {}),
       adjustedTargetPosition: trajectoryResult.adjustedTargetPosition,
     };
   }

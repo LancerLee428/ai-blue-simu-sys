@@ -16,6 +16,7 @@ import type {
   ExplosionRuntimeState,
   Weapon,
   Route,
+  EntitySpec,
 } from '../types/tactical-scenario';
 import type { MapRenderer } from './map-renderer';
 import { DetectionInteraction, type DetectionEvent } from './detection-interaction';
@@ -535,23 +536,24 @@ export class ExecutionEngine {
     if (!this.scenario) return [];
     const entities = this.scenario.forces.flatMap(force => force.entities);
     const maxScans = this.scenario.visualEffects?.performance?.maxActiveScans ?? 8;
+    const trackingEmitters: EmitterVolume[] = [];
+    let debugFallback: EmitterVolume | null = null;
 
-    return this.scenario.detectionZones
-      .flatMap((zone): EmitterVolume[] => {
-        const entity = entities.find(item => item.id === zone.entityId);
-        if (!entity) return [];
-        if (!isRadarDetectionEmitterSource({
-          entityType: entity.type,
-          sensors: entity.loadout?.sensors,
-          label: zone.label,
-        })) return [];
-        const position = this.entityPositions.get(zone.entityId) ?? entity.position;
-        const tracking = normalizeRadarTrackingConfig(zone.tracking);
-        const targetEmitters = selectRadarTrackingTargets({
+    for (const zone of this.scenario.detectionZones) {
+      const entity = entities.find(item => item.id === zone.entityId);
+      if (!entity) continue;
+      if (!isRadarDetectionEmitterSource({
+        entityType: entity.type,
+        sensors: entity.loadout?.sensors,
+        label: zone.label,
+      })) continue;
+      const position = this.entityPositions.get(zone.entityId) ?? entity.position;
+      const targetEmitters = zone.tracking
+        ? selectRadarTrackingTargets({
           radarSide: zone.side,
           radarPosition: position,
           rangeMeters: zone.radiusMeters,
-          tracking,
+          tracking: normalizeRadarTrackingConfig(zone.tracking),
           entities: entities.map(item => ({
             id: item.id,
             side: item.side,
@@ -570,12 +572,14 @@ export class ExecutionEngine {
           position,
           targetPosition: target.position,
           rangeMeters: Math.min(zone.radiusMeters, Math.max(1, target.distanceMeters)),
-        }));
+        }))
+        : [];
 
-        if (targetEmitters.length > 0) return targetEmitters;
-        if (this.runtimeRadarEmitterDebugVisible !== true) return [];
-
-        return [{
+      if (targetEmitters.length > 0) {
+        trackingEmitters.push(...targetEmitters);
+        if (trackingEmitters.length >= maxScans) return trackingEmitters.slice(0, maxScans);
+      } else if (this.runtimeRadarEmitterDebugVisible === true && !debugFallback) {
+        debugFallback = {
           id: `radar-${zone.entityId}`,
           sourceEntityId: zone.entityId,
           kind: 'radar',
@@ -590,9 +594,12 @@ export class ExecutionEngine {
           elevationMaxDeg: this.getElevationMaxForEntity(entity.type),
           pulseCycleMs: this.getRadarScanCycleMs(),
           active: true,
-        }];
-      })
-      .slice(0, maxScans);
+        };
+      }
+    }
+
+    if (trackingEmitters.length > 0) return trackingEmitters.slice(0, maxScans);
+    return debugFallback ? [debugFallback] : [];
   }
 
   private createTrackingEmitter(args: {
@@ -636,72 +643,75 @@ export class ExecutionEngine {
     const maxPulses = this.scenario.visualEffects?.performance?.maxActivePulses ?? 4;
     const ewConfig = this.scenario.visualEffects?.electronicWarfareEffects;
     const pulseCycleMs = ewConfig?.pulseDurationMs ?? 2_200;
+    const trackingEmitters: EmitterVolume[] = [];
+    let areaFallback: EmitterVolume | null = null;
 
-    return this.ewManager.getActiveJammerZones()
-      .flatMap((zone): EmitterVolume[] => {
-        const entity = entities.find(item => item.id === zone.entityId);
-        if (!entity || !ewConfig?.enabled) return [];
-        const position = this.entityPositions.get(entity.id) ?? zone.position;
-        const emitters: EmitterVolume[] = [];
+    for (const zone of this.ewManager.getActiveJammerZones()) {
+      const entity = entities.find(item => item.id === zone.entityId);
+      if (!entity || !ewConfig?.enabled) continue;
+      const position = this.entityPositions.get(entity.id) ?? zone.position;
+      const areaEmitter: EmitterVolume = {
+        id: `ew-${entity.id}-area`,
+        sourceEntityId: entity.id,
+        kind: 'electronic-jamming',
+        mode: 'omni',
+        side: entity.side,
+        position,
+        headingDeg: position.heading ?? entity.position.heading ?? 0,
+        rangeMeters: zone.radius,
+        azimuthCenterDeg: 0,
+        azimuthWidthDeg: 360,
+        elevationMinDeg: entity.type === 'air-jammer' ? -20 : 0,
+        elevationMaxDeg: entity.type === 'air-jammer' ? 65 : 45,
+        pulseCycleMs,
+        active: true,
+      };
 
-        if (ewConfig.areaEnabled) {
-          emitters.push({
-            id: `ew-${entity.id}-area`,
-            sourceEntityId: entity.id,
-            kind: 'electronic-jamming',
-            mode: 'omni',
-            side: entity.side,
-            position,
-            headingDeg: position.heading ?? entity.position.heading ?? 0,
-            rangeMeters: zone.radius,
-            azimuthCenterDeg: 0,
-            azimuthWidthDeg: 360,
-            elevationMinDeg: entity.type === 'air-jammer' ? -20 : 0,
-            elevationMaxDeg: entity.type === 'air-jammer' ? 65 : 45,
-            pulseCycleMs,
-            active: true,
-          });
-        }
+      const sourceTrackingEmitters = selectElectronicWarfareTargets({
+        jammerSide: entity.side,
+        jammerPosition: position,
+        rangeMeters: zone.radius,
+        tracking: ewConfig,
+        entities: entities.map(item => ({
+          id: item.id,
+          side: item.side,
+          type: item.type,
+          position: this.entityPositions.get(item.id) ?? item.position,
+        })),
+        weapons: this.lastRuntimeWeapons.map(weapon => ({
+          id: weapon.id,
+          launcherSide: this.getEntitySide(weapon.launcherId) ?? entity.side,
+          currentPosition: weapon.currentPosition,
+        })),
+      }).map((target): EmitterVolume => {
+        const elevation = calculateElevationDeg(position, target.position);
+        return {
+          id: `ew-${entity.id}-track-${target.category}-${target.id}`,
+          sourceEntityId: entity.id,
+          kind: 'electronic-jamming',
+          mode: 'track',
+          side: entity.side,
+          position,
+          headingDeg: calculateHeadingDeg(position, target.position),
+          rangeMeters: Math.min(zone.radius, Math.max(1, target.distanceMeters)),
+          azimuthCenterDeg: 0,
+          azimuthWidthDeg: 14,
+          elevationMinDeg: elevation - 7,
+          elevationMaxDeg: elevation + 7,
+          pulseCycleMs,
+          active: true,
+        };
+      });
 
-        selectElectronicWarfareTargets({
-          jammerSide: entity.side,
-          jammerPosition: position,
-          rangeMeters: zone.radius,
-          tracking: ewConfig,
-          entities: entities.map(item => ({
-            id: item.id,
-            side: item.side,
-            type: item.type,
-            position: this.entityPositions.get(item.id) ?? item.position,
-          })),
-          weapons: this.lastRuntimeWeapons.map(weapon => ({
-            id: weapon.id,
-            launcherSide: this.getEntitySide(weapon.launcherId) ?? entity.side,
-            currentPosition: weapon.currentPosition,
-          })),
-        }).forEach((target) => {
-          const elevation = calculateElevationDeg(position, target.position);
-          emitters.push({
-            id: `ew-${entity.id}-track-${target.category}-${target.id}`,
-            sourceEntityId: entity.id,
-            kind: 'electronic-jamming',
-            mode: 'track',
-            side: entity.side,
-            position,
-            headingDeg: calculateHeadingDeg(position, target.position),
-            rangeMeters: Math.min(zone.radius, Math.max(1, target.distanceMeters)),
-            azimuthCenterDeg: 0,
-            azimuthWidthDeg: 14,
-            elevationMinDeg: elevation - 7,
-            elevationMaxDeg: elevation + 7,
-            pulseCycleMs,
-            active: true,
-          });
-        });
+      if (sourceTrackingEmitters.length > 0) {
+        trackingEmitters.push(...sourceTrackingEmitters);
+        if (trackingEmitters.length >= maxPulses) return trackingEmitters.slice(0, maxPulses);
+      }
+      if (ewConfig.areaEnabled && !areaFallback) areaFallback = areaEmitter;
+    }
 
-        return emitters;
-      })
-      .slice(0, maxPulses);
+    if (trackingEmitters.length > 0) return trackingEmitters.slice(0, maxPulses);
+    return areaFallback ? [areaFallback] : [];
   }
 
   private syncElectronicWarfareRanges(): void {
@@ -711,8 +721,8 @@ export class ExecutionEngine {
     this.scenario.detectionZones.forEach((zone) => {
       const entity = entities.find(item => item.id === zone.entityId);
       if (!entity) return;
-      if (entity.type !== 'air-jammer' && entity.type !== 'ground-ew') return;
-      if (!zone.label?.includes('电子战')) return;
+      const label = zone.label ?? '';
+      if (!label.includes('电子战') && !label.includes('干扰')) return;
       this.ewManager.overrideJammerRadius(entity.id, zone.radiusMeters);
     });
   }
@@ -953,6 +963,9 @@ export class ExecutionEngine {
     phase.entityStates.forEach((state) => {
       const fromPos = this.entityPositions.get(state.entityId);
       if (!fromPos) return;
+      const route = this.scenario?.routes.find(item => item.entityId === state.entityId);
+      const entity = this.findEntityById(state.entityId);
+      if (!route && entity && this.shouldHoldPhasePosition(entity)) return;
 
       // 如果起点和终点几乎一致，跳过（避免无意义移动）
       const dx = Math.abs(state.position.longitude - fromPos.longitude);
@@ -964,10 +977,25 @@ export class ExecutionEngine {
         entityId: state.entityId,
         from: { ...fromPos },
         to: { ...state.position },
-        route: this.scenario?.routes.find(route => route.entityId === state.entityId),
+        route,
         durationMs: phaseDurationMs,
       });
     });
+  }
+
+  private findEntityById(entityId: string): EntitySpec | undefined {
+    if (!this.scenario) return undefined;
+    for (const force of this.scenario.forces) {
+      const entity = force.entities.find(item => item.id === entityId);
+      if (entity) return entity;
+    }
+    return undefined;
+  }
+
+  private shouldHoldPhasePosition(entity: EntitySpec): boolean {
+    return entity.type === 'ground-radar'
+      || entity.type === 'facility-radar'
+      || entity.type === 'ground-ew';
   }
 
   /**
@@ -1116,6 +1144,11 @@ export class ExecutionEngine {
     // 更新实体位置
     this.updateEntitiesToTime(this.virtualElapsedMs);
 
+    // 同步干扰机当前位置，导弹制导和探测判定都使用同一个运行时位置真相。
+    this.entityPositions.forEach((position, entityId) => {
+      this.ewManager.updateJammerPosition(entityId, position);
+    });
+
     const previousVirtualMs = Math.max(0, this.virtualElapsedMs - realDeltaMs * this.speed);
     const weaponEvaluation = this.weaponSystem.evaluatePhase({
       scenario: this.scenario!,
@@ -1123,12 +1156,8 @@ export class ExecutionEngine {
       previousTimeMs: previousVirtualMs,
       currentTimeMs: this.virtualElapsedMs,
       getEntityPositionAtTime: (entityId, timeMs = this.virtualElapsedMs) => this.findEntityPositionAtTime(entityId, timeMs),
+      getWeaponInterference: (args) => this.ewManager.calculateWeaponInterference(args),
       runtimeConfig: this.scenario?.visualEffects?.weaponRuntime,
-    });
-
-    // 同步干扰机当前位置，探测逻辑统一通过电子战管理器计算有效探测半径。
-    this.entityPositions.forEach((position, entityId) => {
-      this.ewManager.updateJammerPosition(entityId, position);
     });
 
     // 检查探测交互（P0 功能），传入电子战管理器
@@ -1181,6 +1210,7 @@ export class ExecutionEngine {
       this.firedWeaponImpactsThisPhase.add(event.weaponId);
       this.onEventTrigger?.(event as WeaponImpactEvent);
       this.applyImpactDamage(event as WeaponImpactEvent);
+      this.renderer.recordWeaponImpact(event as WeaponImpactEvent);
       const effectType = this.getImpactEffectType(event.targetEntityId);
       this.activeExplosions.set(event.weaponId, {
         id: `explosion-${event.weaponId}`,
@@ -1224,6 +1254,14 @@ export class ExecutionEngine {
 
   private applyPhaseEntityStates(phase: Phase): void {
     phase.entityStates.forEach((state) => {
+      const entity = this.findEntityById(state.entityId);
+      const hasRoute = this.scenario?.routes.some(route => route.entityId === state.entityId) ?? false;
+      if (!hasRoute && entity && this.shouldHoldPhasePosition(entity)) {
+        if (state.status) {
+          this.entityStatuses.set(state.entityId, state.status);
+        }
+        return;
+      }
       // 持久化当前阶段末实体位置，作为下一阶段 buildPhaseMoves 的起点
       this.entityPositions.set(state.entityId, { ...state.position });
       this.renderer.updateEntityPosition(state.entityId, state.position);

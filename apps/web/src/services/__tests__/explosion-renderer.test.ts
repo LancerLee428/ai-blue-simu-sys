@@ -193,6 +193,38 @@ test('MapRenderer should not keep the legacy strike explosion animation path', (
   assert.equal(source.includes('postRender.addEventListener'), false);
 });
 
+test('MapRenderer should not render strike task markers before runtime impact', () => {
+  const sourcePath = fileURLToPath(new URL('../map-renderer.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+  const renderScenarioBody = source.slice(
+    source.indexOf('renderScenario(scenario: TacticalScenario): void'),
+    source.indexOf('  /**\n   * 渲染进攻路线'),
+  );
+
+  assert.equal(renderScenarioBody.includes('renderStrikeTasks'), false);
+  assert.equal(source.includes('recordWeaponImpact'), true);
+});
+
+test('MapRenderer should build unique static detection entity ids for duplicate source zones', () => {
+  const sourcePath = fileURLToPath(new URL('../map-renderer.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.equal(source.includes('getStaticDetectionEntityIds(zone, index)'), true);
+  assert.equal(source.includes('id: `detection-ground-${zone.entityId}`'), false);
+  assert.equal(source.includes('id: `detection-hemi-${zone.entityId}`'), false);
+});
+
+test('ExecutionEngine should record impact marker only when weapon impact fires', () => {
+  const sourcePath = fileURLToPath(new URL('../execution-engine.ts', import.meta.url));
+  const source = readFileSync(sourcePath, 'utf8');
+  const impactBlock = source.slice(
+    source.indexOf('weaponEvaluation.impacts.forEach'),
+    source.indexOf('this.syncRuntimeVisuals(weaponEvaluation.weapons)'),
+  );
+
+  assert.equal(impactBlock.includes('recordWeaponImpact'), true);
+});
+
 test('ExecutionEngine should not prune active explosions with a hard-coded 3000ms window', () => {
   const sourcePath = fileURLToPath(new URL('../execution-engine.ts', import.meta.url));
   const source = readFileSync(sourcePath, 'utf8');
@@ -205,6 +237,6 @@ test('WorkbenchView should load the active action plan before runtime debug effe
   const source = readFileSync(sourcePath, 'utf8');
 
   assert.equal(source.includes('function syncActivePlanToRuntime'), true);
-  assert.equal(source.includes('watch(() => actionPlanStore.activePlanId'), true);
+  assert.equal(/watch\s*\(\s*\(\)\s*=>\s*actionPlanStore\.activePlanId/.test(source), true);
   assert.equal(source.includes('syncActivePlanToRuntime({ flyTo: true })'), true);
 });

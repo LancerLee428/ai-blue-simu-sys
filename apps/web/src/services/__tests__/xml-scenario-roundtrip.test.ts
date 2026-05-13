@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { js2xml, xml2js, type Element as XmlElement } from 'xml-js';
 
 import { XmlScenarioParser } from '../xml-scenario-parser';
@@ -319,4 +320,251 @@ test('XML parser and exporter should preserve visual model configuration', async
   assert.match(exported, /modelMinimumPixelSize="48"/);
   assert.match(exported, /modelPitchOffsetDeg="-8"/);
   assert.match(exported, /modelRollOffsetDeg="1"/);
+});
+
+test('XML parser and exporter should preserve entity formation role markers', async () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Scenario id="formation-role-demo" version="1">
+  <Participating>
+    <Equipment id="red-lead" formationRole="L">
+      <Name>红方长机</Name>
+      <Components>
+        <Component id="red-lead-mover">
+          <Type>air_mover</Type>
+          <InitialState>
+            <PositionType>Geodetic</PositionType>
+            <Longitude>121</Longitude>
+            <Latitude>25</Latitude>
+            <Altitude>10000</Altitude>
+          </InitialState>
+        </Component>
+      </Components>
+    </Equipment>
+  </Participating>
+  <Supporting>
+    <Equipment id="blue-command">
+      <Name>蓝方指控节点</Name>
+      <FormationRole>C</FormationRole>
+      <Components>
+        <Component id="blue-command-mover">
+          <Type>facility_mover</Type>
+          <InitialState>
+            <PositionType>Geodetic</PositionType>
+            <Longitude>122</Longitude>
+            <Latitude>25.5</Latitude>
+            <Altitude>0</Altitude>
+          </InitialState>
+        </Component>
+      </Components>
+    </Equipment>
+  </Supporting>
+</Scenario>`;
+
+  globalThis.DOMParser = TestDOMParser as any;
+  globalThis.XMLSerializer = TestXMLSerializer as any;
+  globalThis.document = {
+    implementation: new TestDocument().implementation,
+  } as unknown as Document;
+
+  const scenario = new XmlScenarioParser().parse(xml);
+  const redLead = scenario.forces[0].entities[0];
+  const blueCommand = scenario.forces[1].entities[0];
+
+  assert.equal(redLead.formationRole, 'L');
+  assert.equal(blueCommand.formationRole, 'C');
+
+  const exported = new XmlScenarioExporter().export(scenario);
+  assert.match(exported, /<FormationRole>L<\/FormationRole>/);
+  assert.match(exported, /<FormationRole>C<\/FormationRole>/);
+});
+
+test('XML parser should infer ground electronic warfare vehicles separately from air jammers', async () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Scenario id="ew-type-demo" version="1">
+  <Supporting>
+    <Equipment id="blue-ew">
+      <Name>蓝方电子战车-01</Name>
+      <Components>
+        <Component id="blue-ew-mover">
+          <Type>ground-ew_mover</Type>
+          <InitialState>
+            <PositionType>Geodetic</PositionType>
+            <Longitude>113</Longitude>
+            <Latitude>34</Latitude>
+            <Altitude>0</Altitude>
+          </InitialState>
+        </Component>
+        <Component id="blue-ew-suite">
+          <Name>电子战压制系统</Name>
+          <Type>sensor_ew</Type>
+        </Component>
+      </Components>
+    </Equipment>
+  </Supporting>
+</Scenario>`;
+
+  globalThis.DOMParser = TestDOMParser as any;
+  const scenario = new XmlScenarioParser().parse(xml);
+  const blueForce = scenario.forces.find(force => force.side === 'blue');
+
+  assert.equal(blueForce?.entities[0]?.type, 'ground-ew');
+});
+
+test('XML parser and exporter should preserve hierarchical formation groups', async () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Scenario id="formation-group-demo" version="1">
+  <Participating>
+    <Equipment id="red-air-01">
+      <Name>红方飞机01</Name>
+      <FormationRole>L</FormationRole>
+      <Components>
+        <Component id="red-air-01-mover">
+          <Type>air_mover</Type>
+          <InitialState>
+            <PositionType>Geodetic</PositionType>
+            <Longitude>121</Longitude>
+            <Latitude>25</Latitude>
+            <Altitude>10000</Altitude>
+          </InitialState>
+        </Component>
+      </Components>
+    </Equipment>
+    <Equipment id="red-air-02">
+      <Name>红方飞机02</Name>
+      <FormationRole>L</FormationRole>
+      <Components>
+        <Component id="red-air-02-mover">
+          <Type>air_mover</Type>
+          <InitialState>
+            <PositionType>Geodetic</PositionType>
+            <Longitude>121.1</Longitude>
+            <Latitude>25.1</Latitude>
+            <Altitude>10000</Altitude>
+          </InitialState>
+        </Component>
+      </Components>
+    </Equipment>
+    <Equipment id="red-radar-01">
+      <Name>红方雷达01</Name>
+      <FormationRole>C</FormationRole>
+      <Components>
+        <Component id="red-radar-01-mover">
+          <Type>facility_mover</Type>
+          <InitialState>
+            <PositionType>Geodetic</PositionType>
+            <Longitude>122</Longitude>
+            <Latitude>25.5</Latitude>
+            <Altitude>0</Altitude>
+          </InitialState>
+        </Component>
+      </Components>
+    </Equipment>
+  </Participating>
+  <Interactions>
+    <Groups>
+      <Group id="red-group-01" name="红方空情引导编组1" side="red" type="formation">
+        <Group id="red-group-01-air" name="飞机1" type="category" formationRole="L">
+          <Member equipRef="red-air-01" role="飞机1-L"/>
+          <Member equipRef="red-air-02" role="飞机1-L"/>
+        </Group>
+        <Group id="red-group-01-radar" name="雷达1" type="category" formationRole="C">
+          <Member equipRef="red-radar-01" role="雷达1-C"/>
+        </Group>
+      </Group>
+    </Groups>
+  </Interactions>
+</Scenario>`;
+
+  globalThis.DOMParser = TestDOMParser as any;
+  globalThis.XMLSerializer = TestXMLSerializer as any;
+  globalThis.document = {
+    implementation: new TestDocument().implementation,
+  } as unknown as Document;
+
+  const scenario = new XmlScenarioParser().parse(xml);
+  const group = scenario.interactions?.groups[0];
+
+  assert.equal(group?.side, 'red');
+  assert.equal(group?.children?.length, 2);
+  assert.equal(group?.members.length, 3);
+  assert.equal(group?.children?.[0].name, '飞机1');
+  assert.equal(group?.children?.[0].formationRole, 'L');
+  assert.equal(group?.members[0].categoryName, '飞机1');
+  assert.equal(group?.members[2].categoryName, '雷达1');
+  assert.equal(group?.members[2].formationRole, 'C');
+
+  const exported = new XmlScenarioExporter().export(scenario);
+  assert.match(exported, /<Group id="red-group-01" name="红方空情引导编组1" side="red" type="formation">/);
+  assert.match(exported, /<Group id="red-group-01-air" name="飞机1" type="category" formationRole="L">/);
+  assert.match(exported, /<Group id="red-group-01-radar" name="雷达1" type="category" formationRole="C">/);
+  assert.match(exported, /<Member equipRef="red-air-01" role="飞机1-L"\/>/);
+  assert.match(exported, /<Member equipRef="red-radar-01" role="雷达1-C"\/>/);
+});
+
+test('Example XML should configure red radar tracking, red EW, limited aircraft routes and missile launches', () => {
+  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+  globalThis.DOMParser = TestDOMParser as any;
+
+  const scenario = new XmlScenarioParser().parse(xml);
+  const redRadarZones = scenario.detectionZones.filter(zone => (
+    zone.side === 'red'
+    && zone.label?.includes('雷达探测范围')
+  ));
+  const redEwZones = scenario.detectionZones.filter(zone => zone.label?.includes('电子战干扰'));
+  const ewEffects = scenario.visualEffects?.electronicWarfareEffects;
+  const performance = scenario.visualEffects?.performance;
+  const routeIds = scenario.routes.map(route => route.entityId);
+  const strikeAttackers = scenario.strikeTasks.map(task => task.attackerEntityId);
+  const redRadarEntityIds = scenario.forces
+    .flatMap(force => force.entities)
+    .filter(entity => entity.side === 'red' && /-radar-/.test(entity.id))
+    .map(entity => entity.id)
+    .sort();
+  const trajectoryAltitudes = scenario.strikeTasks
+    .flatMap(task => task.weaponTrajectory?.points ?? [])
+    .filter(point => point.role === 'boost' || point.role === 'cruise' || point.role === 'terminal')
+    .map(point => point.position.altitude);
+
+  assert.deepEqual(redRadarEntityIds, ['red-g08-radar-01', 'red-g09-radar-01']);
+  assert.ok(redRadarZones.length > 0);
+  assert.ok(redRadarZones.every(zone => zone.radiusMeters === 1_200_000));
+  assert.deepEqual(
+    redRadarZones.map(zone => zone.entityId).sort(),
+    ['red-g08-radar-01', 'red-g09-radar-01'],
+  );
+  assert.deepEqual(
+    redRadarZones.filter(zone => zone.tracking?.enabled).map(zone => zone.entityId).sort(),
+    ['red-g08-radar-01', 'red-g09-radar-01'],
+  );
+  assert.ok(redRadarZones.filter(zone => zone.tracking?.enabled).every(zone => zone.tracking?.maxTracks === 24));
+  assert.deepEqual(redEwZones.map(zone => zone.entityId).sort(), ['red-g08-radar-01', 'red-g09-radar-01']);
+  assert.ok(redEwZones.every(zone => zone.side === 'red' && zone.radiusMeters === 1_200_000));
+  assert.equal(ewEffects?.areaEnabled, false);
+  assert.deepEqual(ewEffects?.trackingTargetTypes, ['enemy-missile']);
+  assert.equal(ewEffects?.maxTracks, 1);
+  assert.equal(performance?.maxActiveScans, 24);
+  assert.equal(performance?.maxActivePulses, 2);
+  assert.deepEqual(new Set(trajectoryAltitudes), new Set([616_667, 506_667, 140_000]));
+  assert.deepEqual(routeIds.filter(id => id.startsWith('red-')).sort(), [
+    'red-g01-air-01',
+    'red-g01-air-02',
+    'red-g01-air-03',
+    'red-g02-air-01',
+    'red-g03-air-01',
+  ]);
+  assert.deepEqual(routeIds.filter(id => id.startsWith('blue-')).sort(), [
+    'blue-g01-air-01',
+    'blue-g02-air-01',
+  ]);
+  assert.deepEqual(strikeAttackers.filter(id => id.startsWith('red-')), [
+    'red-g01-air-03',
+    'red-g02-missile-01',
+    'red-g04-missile-01',
+    'red-g05-missile-01',
+    'red-g09-missile-01',
+  ]);
+  assert.deepEqual(strikeAttackers.filter(id => id.startsWith('blue-')), [
+    'blue-g01-missile2-01',
+    'blue-g02-missile3-01',
+  ]);
 });

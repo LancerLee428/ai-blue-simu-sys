@@ -58,6 +58,8 @@ export type WeaponTrajectoryPointRole =
   | 'impact'
   | 'custom';
 
+export type FormationRoleMarker = 'L' | 'V' | 'C';
+
 export interface WeaponTrajectoryKeyPoint {
   id?: string;
   role?: WeaponTrajectoryPointRole;
@@ -385,11 +387,18 @@ export interface RuntimeVisualUpdate {
 export interface GroupMember {
   equipRef: string;
   role?: string;
+  categoryId?: string;
+  categoryName?: string;
+  formationRole?: FormationRoleMarker;
 }
 
 export interface EquipmentGroup {
   id: string;
   name: string;
+  side?: ForceSide;
+  type?: 'formation' | 'category';
+  role?: string;
+  formationRole?: FormationRoleMarker;
   members: GroupMember[];
   children?: EquipmentGroup[];
 }
@@ -747,6 +756,7 @@ export interface WeaponImpactEvent extends TacticalEvent {
   hitPosition: GeoPosition;
   damage: number;
   weaponType: WeaponType;
+  interference?: WeaponInterferenceState;
 }
 
 export interface DamageEvent extends TacticalEvent {
@@ -805,6 +815,7 @@ export interface EntitySpec {
   modelId?: string;
   modelType?: string;
   visualModel?: VisualModelConfig;
+  formationRole?: FormationRoleMarker;
   interfaceProtocol?: string;
   federateName?: string;
   components?: EquipmentComponent[];

@@ -9,6 +9,19 @@ export interface ScenarioEntityMoveResult {
   delta: GeoPosition;
 }
 
+export interface ScenarioEntityUpdateInput {
+  name?: string;
+  position?: Partial<GeoPosition>;
+}
+
+export interface ScenarioRoutePointUpdateResult {
+  scenario: TacticalScenario;
+  entityPositionChanged: boolean;
+  linkedLaunchPointsChanged: number;
+  entityName?: string;
+  routeLabel?: string;
+}
+
 function cloneScenario(scenario: TacticalScenario): TacticalScenario {
   return JSON.parse(JSON.stringify(scenario)) as TacticalScenario;
 }
@@ -69,12 +82,64 @@ function moveTargetTrajectoryPoint(
   return point;
 }
 
+function isSamePosition(a: GeoPosition, b: GeoPosition): boolean {
+  return Math.abs(a.longitude - b.longitude) < 1e-9
+    && Math.abs(a.latitude - b.latitude) < 1e-9
+    && Math.abs((a.altitude ?? 0) - (b.altitude ?? 0)) < 1e-6;
+}
+
+function isLaunchTrajectoryPoint(point: WeaponTrajectoryKeyPoint, index: number): boolean {
+  return point.role === 'launch' || index === 0;
+}
+
+function isRoutePointAtTimestamp(timestamp: number | undefined, targetTimestamp: number): boolean {
+  return timestamp !== undefined && Math.abs(timestamp - targetTimestamp) < 1e-6;
+}
+
+function isRoutePointLinkedToStrikeLaunch(
+  oldRoutePointPosition: GeoPosition,
+  routeTimestamp: number | undefined,
+  task: TacticalScenario['strikeTasks'][number],
+): boolean {
+  if (isRoutePointAtTimestamp(routeTimestamp, task.timestamp)) return true;
+
+  const launchPoint = task.weaponTrajectory?.points.find((point, index) =>
+    isLaunchTrajectoryPoint(point, index)
+  );
+  return launchPoint ? isSamePosition(oldRoutePointPosition, launchPoint.position) : false;
+}
+
 export function moveScenarioEntityWithLinkedGeometry(
   scenario: TacticalScenario,
   entityId: string,
   newPositionInput: Partial<GeoPosition>,
 ): TacticalScenario {
   return moveScenarioEntityWithLinkedGeometryDetailed(scenario, entityId, newPositionInput).scenario;
+}
+
+export function updateScenarioEntityWithLinkedGeometry(
+  scenario: TacticalScenario,
+  entityId: string,
+  updates: ScenarioEntityUpdateInput,
+): TacticalScenario {
+  const position = updates.position;
+  const movedScenario = position
+    ? moveScenarioEntityWithLinkedGeometryDetailed(scenario, entityId, position).scenario
+    : cloneScenario(scenario);
+
+  if (updates.name === undefined) return movedScenario;
+
+  const nextName = updates.name.trim();
+  if (!nextName) return movedScenario;
+
+  const entity = movedScenario.forces
+    .flatMap(force => force.entities)
+    .find(item => item.id === entityId);
+  if (entity) {
+    entity.name = nextName;
+  }
+
+  return movedScenario;
 }
 
 export function moveScenarioEntityWithLinkedGeometryDetailed(
@@ -164,5 +229,121 @@ export function moveScenarioEntityWithLinkedGeometryDetailed(
   return {
     scenario: nextScenario,
     delta,
+  };
+}
+
+export function updateScenarioRoutePointWithLinkedGeometry(
+  scenario: TacticalScenario,
+  routeIndex: number,
+  pointIndex: number,
+  newPositionInput: Partial<GeoPosition>,
+): ScenarioRoutePointUpdateResult {
+  const nextScenario = cloneScenario(scenario);
+  const route = nextScenario.routes[routeIndex];
+  const point = route?.points[pointIndex];
+
+  if (!route || !point) {
+    return {
+      scenario: nextScenario,
+      entityPositionChanged: false,
+      linkedLaunchPointsChanged: 0,
+    };
+  }
+
+  const oldPosition = { ...point.position };
+  const newPosition = resolveMovePosition(oldPosition, newPositionInput);
+  const linkedLaunchPhaseIds = new Set<string>();
+  let linkedLaunchPointsChanged = 0;
+
+  route.points[pointIndex] = {
+    ...point,
+    position: newPosition,
+  };
+
+  const entity = nextScenario.forces
+    .flatMap(force => force.entities)
+    .find(item => item.id === route.entityId);
+  const entityPositionChanged = pointIndex === 0 && Boolean(entity);
+
+  if (entityPositionChanged && entity) {
+    entity.position = { ...newPosition };
+    nextScenario.detectionZones = nextScenario.detectionZones.map(zone => {
+      if (zone.entityId !== route.entityId) return zone;
+      return {
+        ...zone,
+        center: { ...newPosition },
+      };
+    });
+  }
+
+  nextScenario.strikeTasks = nextScenario.strikeTasks.map(task => {
+    if (
+      task.attackerEntityId !== route.entityId
+      || !isRoutePointLinkedToStrikeLaunch(oldPosition, point.timestamp, task)
+    ) {
+      return task;
+    }
+
+    linkedLaunchPhaseIds.add(task.phaseId);
+
+    if (!task.weaponTrajectory) return task;
+
+    return {
+      ...task,
+      weaponTrajectory: {
+        ...task.weaponTrajectory,
+        points: task.weaponTrajectory.points.map((trajectoryPoint, trajectoryIndex) => {
+          if (!isLaunchTrajectoryPoint(trajectoryPoint, trajectoryIndex)) return trajectoryPoint;
+          linkedLaunchPointsChanged += 1;
+          return {
+            ...trajectoryPoint,
+            position: { ...newPosition },
+          };
+        }),
+      },
+    };
+  });
+
+  nextScenario.phases = nextScenario.phases.map(phase => ({
+    ...phase,
+    events: phase.events.map(event => {
+      if (
+        event.sourceEntityId !== route.entityId
+        || !isRoutePointAtTimestamp(point.timestamp, event.timestamp)
+        || !event.weaponTrajectory
+      ) {
+        return event;
+      }
+
+      return {
+        ...event,
+        weaponTrajectory: {
+          ...event.weaponTrajectory,
+          points: event.weaponTrajectory.points.map((trajectoryPoint, trajectoryIndex) => {
+            if (!isLaunchTrajectoryPoint(trajectoryPoint, trajectoryIndex)) return trajectoryPoint;
+            return {
+              ...trajectoryPoint,
+              position: { ...newPosition },
+            };
+          }),
+        },
+      };
+    }),
+    entityStates: phase.entityStates.map(state => {
+      if (state.entityId !== route.entityId) return state;
+      if (!isSamePosition(state.position, oldPosition) && !linkedLaunchPhaseIds.has(phase.id)) return state;
+      return {
+        ...state,
+        position: { ...newPosition },
+      };
+    }),
+  }));
+
+  return {
+    scenario: nextScenario,
+    entityPositionChanged,
+    linkedLaunchPointsChanged,
+    entityName: entity?.name,
+    routeLabel: route.label,
   };
 }

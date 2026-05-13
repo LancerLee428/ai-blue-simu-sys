@@ -196,6 +196,7 @@ export class ExecutionEngine {
   private firedWeaponImpactsThisPhase = new Set<string>();
   private activeExplosions = new Map<string, ExplosionRuntimeState>();
   private lastRuntimeWeapons: Weapon[] = [];
+  private interceptedWeaponLauncherIdsThisPhase = new Set<string>();
   private runtimeRadarEmitterDebugVisible: boolean | null = null;
   private runtimeEWEmitterDebugVisible: boolean | null = null;
   private postCompletionFrameId: number | null = null;
@@ -292,6 +293,7 @@ export class ExecutionEngine {
       this.firedEventsThisPhase.clear();
       this.firedWeaponLaunchesThisPhase.clear();
       this.firedWeaponImpactsThisPhase.clear();
+      this.interceptedWeaponLauncherIdsThisPhase.clear();
       this.activeExplosions.clear();
       this.lastRuntimeWeapons = [];
       this.detectionInteraction.reset();
@@ -348,6 +350,7 @@ export class ExecutionEngine {
     this.firedEventsThisPhase.clear();
     this.firedWeaponLaunchesThisPhase.clear();
     this.firedWeaponImpactsThisPhase.clear();
+    this.interceptedWeaponLauncherIdsThisPhase.clear();
     this.activeExplosions.clear();
     this.lastRuntimeWeapons = [];
     this.status = 'idle';
@@ -381,6 +384,7 @@ export class ExecutionEngine {
       this.firedEventsThisPhase.clear();
       this.firedWeaponLaunchesThisPhase.clear();
       this.firedWeaponImpactsThisPhase.clear();
+      this.interceptedWeaponLauncherIdsThisPhase.clear();
       this.activeExplosions.clear();
       this.lastRuntimeWeapons = [];
       this.onPhaseComplete?.(phase);
@@ -400,9 +404,10 @@ export class ExecutionEngine {
     this.currentPhaseIndex--;
     this.virtualElapsedMs = 0;
     this.firedEventsThisPhase.clear();
-    this.firedWeaponLaunchesThisPhase.clear();
-    this.firedWeaponImpactsThisPhase.clear();
-    this.activeExplosions.clear();
+      this.firedWeaponLaunchesThisPhase.clear();
+      this.firedWeaponImpactsThisPhase.clear();
+      this.interceptedWeaponLauncherIdsThisPhase.clear();
+      this.activeExplosions.clear();
     this.lastRuntimeWeapons = [];
     this.syncRuntimeVisuals([]);
     this.notifyStatusChange();
@@ -438,6 +443,7 @@ export class ExecutionEngine {
     this.firedEventsThisPhase.clear();
     this.firedWeaponLaunchesThisPhase.clear();
     this.firedWeaponImpactsThisPhase.clear();
+    this.interceptedWeaponLauncherIdsThisPhase.clear();
     this.activeExplosions.clear();
     this.lastRuntimeWeapons = [];
     this.detectionInteraction.reset();
@@ -995,7 +1001,8 @@ export class ExecutionEngine {
   private shouldHoldPhasePosition(entity: EntitySpec): boolean {
     return entity.type === 'ground-radar'
       || entity.type === 'facility-radar'
-      || entity.type === 'ground-ew';
+      || entity.type === 'ground-ew'
+      || entity.type === 'space-satellite';
   }
 
   /**
@@ -1074,6 +1081,7 @@ export class ExecutionEngine {
 
   private applyImpactDamage(event: WeaponImpactEvent): void {
     if (!this.scenario) return;
+    if (event.interceptedEntityId || event.targetEntityId.includes('marker')) return;
 
     for (const force of this.scenario.forces) {
       const target = force.entities.find(entity => entity.id === event.targetEntityId);
@@ -1117,6 +1125,35 @@ export class ExecutionEngine {
       }
       return;
     }
+  }
+
+  private getInterceptedMissileLauncherId(event: TacticalEvent): string | null {
+    const direct = event.interceptedEntityId?.trim();
+    if (direct) return direct;
+
+    const targetEntityId = event.targetEntityId;
+    if (!this.scenario || !targetEntityId?.includes('intercept')) return null;
+    if (!event.sourceEntityId.startsWith('red-')) return null;
+    if (!/拦截|摧毁|命中/.test(event.detail)) return null;
+
+    const phase = this.scenario.phases[this.currentPhaseIndex];
+    const candidate = phase?.events.find((item) => (
+      item.type === 'attack'
+      && item.sourceEntityId.startsWith('blue-')
+      && item.targetEntityId !== targetEntityId
+      && !this.interceptedWeaponLauncherIdsThisPhase.has(item.sourceEntityId)
+      && item.timestamp <= event.timestamp
+    ));
+
+    return candidate?.sourceEntityId ?? null;
+  }
+
+  private shouldSuppressWeaponImpact(event: WeaponImpactEvent): boolean {
+    return this.interceptedWeaponLauncherIdsThisPhase.has(event.sourceEntityId);
+  }
+
+  private shouldEmitWeaponLaunch(event: WeaponLaunchEvent): boolean {
+    return !this.interceptedWeaponLauncherIdsThisPhase.has(event.sourceEntityId);
   }
 
   /**
@@ -1202,15 +1239,24 @@ export class ExecutionEngine {
     weaponEvaluation.launches.forEach((event) => {
       if (this.firedWeaponLaunchesThisPhase.has(event.weaponId)) return;
       this.firedWeaponLaunchesThisPhase.add(event.weaponId);
+      if (!this.shouldEmitWeaponLaunch(event as WeaponLaunchEvent)) return;
       this.onEventTrigger?.(event as WeaponLaunchEvent);
     });
 
     weaponEvaluation.impacts.forEach((event) => {
+      if (this.shouldSuppressWeaponImpact(event as WeaponImpactEvent)) {
+        this.firedWeaponImpactsThisPhase.add(event.weaponId);
+        return;
+      }
       if (this.firedWeaponImpactsThisPhase.has(event.weaponId)) return;
       this.firedWeaponImpactsThisPhase.add(event.weaponId);
       this.onEventTrigger?.(event as WeaponImpactEvent);
       this.applyImpactDamage(event as WeaponImpactEvent);
       this.renderer.recordWeaponImpact(event as WeaponImpactEvent);
+      const interceptedLauncherId = this.getInterceptedMissileLauncherId(event as WeaponImpactEvent);
+      if (interceptedLauncherId) {
+        this.interceptedWeaponLauncherIdsThisPhase.add(interceptedLauncherId);
+      }
       const effectType = this.getImpactEffectType(event.targetEntityId);
       this.activeExplosions.set(event.weaponId, {
         id: `explosion-${event.weaponId}`,
@@ -1222,7 +1268,9 @@ export class ExecutionEngine {
       });
     });
 
-    this.syncRuntimeVisuals(weaponEvaluation.weapons);
+    this.syncRuntimeVisuals(
+      weaponEvaluation.weapons.filter(weapon => !this.interceptedWeaponLauncherIdsThisPhase.has(weapon.launcherId)),
+    );
 
     // 检查阶段是否结束
     if (this.virtualElapsedMs >= phase.duration * 1000) {
@@ -1235,6 +1283,7 @@ export class ExecutionEngine {
         this.firedEventsThisPhase.clear();
         this.firedWeaponLaunchesThisPhase.clear();
         this.firedWeaponImpactsThisPhase.clear();
+        this.interceptedWeaponLauncherIdsThisPhase.clear();
         // 为下一阶段建立移动计划（从上阶段末位置出发）
         this.buildPhaseMoves(this.currentPhaseIndex);
         this.onPhaseComplete?.(phase);

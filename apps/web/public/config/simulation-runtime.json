@@ -1,0 +1,16 @@
+{
+  "camera": {
+    "enabled": true,
+    "longitude": 121.39,
+    "latitude": 37.52,
+    "altitude": 2500000,
+    "headingDeg": 0,
+    "pitchDeg": -45,
+    "rollDeg": 0,
+    "durationSeconds": 2.5
+  },
+  "playback": {
+    "flyToBeforePlay": true,
+    "startDelayAfterCameraMs": 800
+  }
+}

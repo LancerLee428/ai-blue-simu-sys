@@ -2,6 +2,10 @@ import type {
   GeoPosition,
   TacticalScenario,
   WeaponTrajectoryKeyPoint,
+  RadarDeploymentRecommendation,
+  EntitySpec,
+  DetectionZone,
+  GroupMember,
 } from '../types/tactical-scenario';
 
 export interface ScenarioEntityMoveResult {
@@ -22,8 +26,112 @@ export interface ScenarioRoutePointUpdateResult {
   routeLabel?: string;
 }
 
+export interface RadarDeploymentResult {
+  scenario: TacticalScenario;
+  deployedEntityId: string;
+}
+
 function cloneScenario(scenario: TacticalScenario): TacticalScenario {
   return JSON.parse(JSON.stringify(scenario)) as TacticalScenario;
+}
+
+function buildRadarDeploymentEntity(
+  recommendation: RadarDeploymentRecommendation,
+  deployedEntityId: string,
+): EntitySpec {
+  return {
+    id: deployedEntityId,
+    name: recommendation.location.name.replace(/点$/, '') || '补盲雷达',
+    type: 'ground-radar',
+    side: 'red',
+    position: {
+      longitude: recommendation.location.longitude,
+      latitude: recommendation.location.latitude,
+      altitude: recommendation.location.altitude,
+    },
+    formationRole: 'C',
+    visualModel: {
+      alias: 'ld',
+      uri: 'ld/ld_01.glb',
+      scale: 0.008,
+      minimumPixelSize: 64,
+      color: '#31f5ff',
+      colorBlendMode: 'mix',
+      colorBlendAmount: 0.7,
+      silhouetteColor: '#ffffff',
+      silhouetteSize: 2,
+    },
+    loadout: {
+      weapons: ['hq-9'],
+      sensors: ['radar'],
+    },
+    components: [
+      {
+        id: `${deployedEntityId}-mover`,
+        name: '地面机动/部署系统',
+        type: 'ground-radar_mover',
+        initialState: {
+          positionType: 'Geodetic',
+          longitude: recommendation.location.longitude,
+          latitude: recommendation.location.latitude,
+          altitude: recommendation.location.altitude,
+        },
+      },
+      {
+        id: `${deployedEntityId}-sensor`,
+        name: '远程相控阵雷达',
+        type: 'sensor_radar',
+        performanceParams: [
+          { key: 'maxDetectRange', value: 1_150_000, unit: 'm' },
+          { key: 'azimuthResolution', value: 0.5, unit: 'deg' },
+        ],
+        initialState: {
+          status: 'active',
+        },
+      },
+    ],
+  };
+}
+
+function buildRadarDeploymentZone(
+  recommendation: RadarDeploymentRecommendation,
+  deployedEntityId: string,
+): DetectionZone {
+  return {
+    entityId: deployedEntityId,
+    side: 'red',
+    center: {
+      longitude: recommendation.location.longitude,
+      latitude: recommendation.location.latitude,
+      altitude: recommendation.location.altitude,
+    },
+    radiusMeters: 1_150_000,
+    label: `${recommendation.location.name} 雷达探测范围`,
+    tracking: {
+      enabled: true,
+      targetTypes: ['enemy-aircraft', 'enemy-missile'],
+      maxTracks: 2,
+    },
+  };
+}
+
+function buildRadarDeploymentGroup(
+  deployedEntityId: string,
+  recommendation: RadarDeploymentRecommendation,
+): { id: string; name: string; side: 'red'; type: 'formation'; formationRole: 'C'; members: GroupMember[] } {
+  return {
+    id: `${deployedEntityId}-group`,
+    name: recommendation.location.name.replace(/点$/, '') || '补盲雷达编组',
+    side: 'red',
+    type: 'formation',
+    formationRole: 'C',
+    members: [
+      {
+        equipRef: deployedEntityId,
+        role: '雷达-C',
+      },
+    ],
+  };
 }
 
 function addDelta(position: GeoPosition, delta: GeoPosition): GeoPosition {
@@ -140,6 +248,63 @@ export function updateScenarioEntityWithLinkedGeometry(
   }
 
   return movedScenario;
+}
+
+export function deployRadarRecommendationWithLinkedGeometry(
+  scenario: TacticalScenario,
+  recommendation: RadarDeploymentRecommendation,
+): RadarDeploymentResult {
+  const nextScenario = cloneScenario(scenario);
+  const deployedEntityId = recommendation.deployedEntityId ?? `radar-deployment-${recommendation.id}`;
+  const entity = buildRadarDeploymentEntity(recommendation, deployedEntityId);
+  const zone = buildRadarDeploymentZone(recommendation, deployedEntityId);
+  const group = buildRadarDeploymentGroup(deployedEntityId, recommendation);
+
+  const redForce = nextScenario.forces.find(force => force.side === 'red');
+  if (redForce) {
+    const entityIndex = redForce.entities.findIndex(item => item.id === deployedEntityId);
+    if (entityIndex === -1) {
+      redForce.entities.push(entity);
+    } else {
+      redForce.entities[entityIndex] = entity;
+    }
+  } else {
+    nextScenario.forces.push({
+      side: 'red',
+      name: '被试装备',
+      entities: [entity],
+    });
+  }
+
+  nextScenario.detectionZones = [
+    ...nextScenario.detectionZones.filter(item => item.entityId !== deployedEntityId),
+    zone,
+  ];
+
+  nextScenario.interactions = {
+    groups: [
+      ...(nextScenario.interactions?.groups ?? []).filter(item => item.id !== group.id),
+      group,
+    ],
+    commandControl: nextScenario.interactions?.commandControl ?? [],
+    communications: nextScenario.interactions?.communications ?? [],
+    detectionLinks: nextScenario.interactions?.detectionLinks ?? [],
+  };
+
+  nextScenario.postRunRecommendations = (nextScenario.postRunRecommendations ?? []).map((item) => (
+    item.id === recommendation.id
+      ? {
+        ...item,
+        status: 'deployed' as const,
+        deployedEntityId,
+      }
+      : item
+  ));
+
+  return {
+    scenario: nextScenario,
+    deployedEntityId,
+  };
 }
 
 export function moveScenarioEntityWithLinkedGeometryDetailed(

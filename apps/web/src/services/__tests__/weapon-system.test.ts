@@ -145,15 +145,15 @@ test('WeaponSystem should emit one impact when current time crosses impact time'
 });
 
 test('Weapon database should cover every weapon id used by the example XML', () => {
-  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+  const xml = readFileSync('data-example/东海-动态推演-0513.xml', 'utf8');
   const weaponIds = Array.from(xml.matchAll(/<Weapon id="([^"]+)"/g), match => match[1]);
   const missingWeaponIds = Array.from(new Set(weaponIds.filter(id => !WEAPON_DATABASE[id])));
 
   assert.deepEqual(missingWeaponIds, []);
 });
 
-test('Example XML strike plan should use one red aircraft standoff attack, four red launched missiles and two blue launched missiles', () => {
-  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+test('Example XML strike plan should use four blue launches and three red interceptors', () => {
+  const xml = readFileSync('data-example/东海-动态推演-0513.xml', 'utf8');
   const attackers = Array.from(
     xml.matchAll(/<StrikeTask[^>]*attackerEntityId="([^"]+)"/g),
     match => match[1],
@@ -162,22 +162,27 @@ test('Example XML strike plan should use one red aircraft standoff attack, four 
   assert.deepEqual(
     attackers.filter(id => id.startsWith('red-')),
     [
-      'red-g01-air-03',
-      'red-g02-missile-01',
-      'red-g04-missile-01',
-      'red-g05-missile-01',
-      'red-g09-missile-01',
+      'red-g01-radar-01',
+      'red-g01-radar-02',
+      'red-g03-radar-01',
     ],
   );
 
-  assert.match(xml, /<Route entityId="red-g01-air-03"[^>]*>/);
-  assert.match(xml, /<StrikeTask id="strike-red-g01-air3-blue-platform1" attackerEntityId="red-g01-air-03"/);
-  assert.match(xml, /<Event type="attack" timestamp="16" sourceEntityId="red-g01-air-03"/);
+  assert.match(xml, /<StrikeTask id="blue-launch-01-initial-intercept" attackerEntityId="blue-g01-missile-01"/);
+  assert.match(xml, /<StrikeTask id="red-interceptor-01-initial" attackerEntityId="red-g01-radar-01" targetEntityId="red-intercept-initial-marker" interceptedEntityId="blue-g01-missile-01"/);
+  assert.match(xml, /<StrikeTask id="red-interceptor-02-midcourse" attackerEntityId="red-g01-radar-02" targetEntityId="red-intercept-midcourse-marker" interceptedEntityId="blue-g02-missile-01"/);
+  assert.match(xml, /<StrikeTask id="red-interceptor-03-terminal" attackerEntityId="red-g03-radar-01" targetEntityId="red-intercept-terminal-marker" interceptedEntityId="blue-g03-missile-01"/);
+  assert.match(xml, /<Event type="attack" timestamp="20" sourceEntityId="blue-g05-missile-01"[^>]+改变落点/);
+  assert.match(xml, /<DetectionZone entityId="red-g05-satellite-01"[^>]+星载全程扫描跟踪范围/);
+  assert.match(xml, /蓝方关岛北部导弹五组-01/);
+  assert.doesNotMatch(xml, /夏威夷/);
   assert.deepEqual(
     attackers.filter(id => id.startsWith('blue-')),
     [
-      'blue-g01-missile2-01',
-      'blue-g02-missile3-01',
+      'blue-g01-missile-01',
+      'blue-g02-missile-01',
+      'blue-g03-missile-01',
+      'blue-g05-missile-01',
     ],
   );
 });

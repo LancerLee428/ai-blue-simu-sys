@@ -246,7 +246,7 @@ test('XML parser and exporter should preserve visual model configuration', async
   <Participating>
     <Equipment id="red-fighter1">
       <Name>歼-16-01</Name>
-      <VisualModel alias="fj" uri="fj/ZDJ_01_v3.glb" scale="0.08" minimumPixelSize="72" headingOffsetDeg="90" pitchOffsetDeg="-4" rollOffsetDeg="2"/>
+      <VisualModel alias="fj" uri="fj/ZDJ_01_v3.glb" scale="0.08" minimumPixelSize="72" headingOffsetDeg="90" pitchOffsetDeg="-4" rollOffsetDeg="2" color="#31f5ff" colorBlendMode="mix" colorBlendAmount="0.7" silhouetteColor="#ffffff" silhouetteSize="2"/>
       <Components>
         <Component id="red-fighter1-mover">
           <Type>air_mover</Type>
@@ -305,6 +305,11 @@ test('XML parser and exporter should preserve visual model configuration', async
   assert.equal(fighter.visualModel?.headingOffsetDeg, 90);
   assert.equal(fighter.visualModel?.pitchOffsetDeg, -4);
   assert.equal(fighter.visualModel?.rollOffsetDeg, 2);
+  assert.equal(fighter.visualModel?.color, '#31f5ff');
+  assert.equal(fighter.visualModel?.colorBlendMode, 'mix');
+  assert.equal(fighter.visualModel?.colorBlendAmount, 0.7);
+  assert.equal(fighter.visualModel?.silhouetteColor, '#ffffff');
+  assert.equal(fighter.visualModel?.silhouetteSize, 2);
   assert.equal(radar.visualModel?.alias, 'ld');
   assert.equal(scenario.visualEffects?.weaponEffects.items[0].visualModel?.alias, 'dd');
   assert.equal(scenario.visualEffects?.weaponEffects.items[0].visualModel?.uri, 'dd/XHDD_01.glb');
@@ -313,7 +318,7 @@ test('XML parser and exporter should preserve visual model configuration', async
   assert.equal(scenario.visualEffects?.weaponEffects.items[0].visualModel?.rollOffsetDeg, 1);
 
   const exported = new XmlScenarioExporter().export(scenario);
-  assert.match(exported, /<VisualModel alias="fj" uri="fj\/ZDJ_01_v3\.glb" scale="0.08" minimumPixelSize="72" headingOffsetDeg="90" pitchOffsetDeg="-4" rollOffsetDeg="2"\/>/);
+  assert.match(exported, /<VisualModel alias="fj" uri="fj\/ZDJ_01_v3\.glb" scale="0.08" minimumPixelSize="72" headingOffsetDeg="90" pitchOffsetDeg="-4" rollOffsetDeg="2" color="#31f5ff" colorBlendMode="mix" colorBlendAmount="0.7" silhouetteColor="#ffffff" silhouetteSize="2"\/>/);
   assert.match(exported, /<VisualModel alias="ld" uri="ld\/ld_01\.glb" scale="0.006" minimumPixelSize="64"\/>/);
   assert.match(exported, /modelAlias="dd"/);
   assert.match(exported, /modelUri="dd\/XHDD_01\.glb"/);
@@ -501,8 +506,8 @@ test('XML parser and exporter should preserve hierarchical formation groups', as
   assert.match(exported, /<Member equipRef="red-radar-01" role="雷达1-C"\/>/);
 });
 
-test('Example XML should configure red radar tracking, red EW, limited aircraft routes and missile launches', () => {
-  const xml = readFileSync('data-example/东海联合打击-2024-1777165955760.xml', 'utf8');
+test('Example XML should configure limited red radar tracking, EW diversion, and missile intercept launches', () => {
+  const xml = readFileSync('data-example/东海-动态推演-0513.xml', 'utf8');
   globalThis.DOMParser = TestDOMParser as any;
 
   const scenario = new XmlScenarioParser().parse(xml);
@@ -510,61 +515,114 @@ test('Example XML should configure red radar tracking, red EW, limited aircraft 
     zone.side === 'red'
     && zone.label?.includes('雷达探测范围')
   ));
+  const recommendations = scenario.postRunRecommendations ?? [];
   const redEwZones = scenario.detectionZones.filter(zone => zone.label?.includes('电子战干扰'));
+  const satelliteZone = scenario.detectionZones.find(zone => zone.entityId === 'red-g05-satellite-01');
   const ewEffects = scenario.visualEffects?.electronicWarfareEffects;
   const performance = scenario.visualEffects?.performance;
-  const routeIds = scenario.routes.map(route => route.entityId);
   const strikeAttackers = scenario.strikeTasks.map(task => task.attackerEntityId);
+  const allTrajectoryAltitudes = scenario.strikeTasks.flatMap(task =>
+    task.weaponTrajectory?.points.map(point => point.position.altitude) ?? [],
+  );
+  const redSatellite = scenario.forces
+    .flatMap(force => force.entities)
+    .find(entity => entity.id === 'red-g05-satellite-01');
   const redRadarEntityIds = scenario.forces
     .flatMap(force => force.entities)
     .filter(entity => entity.side === 'red' && /-radar-/.test(entity.id))
     .map(entity => entity.id)
     .sort();
-  const trajectoryAltitudes = scenario.strikeTasks
-    .flatMap(task => task.weaponTrajectory?.points ?? [])
-    .filter(point => point.role === 'boost' || point.role === 'cruise' || point.role === 'terminal')
-    .map(point => point.position.altitude);
+  const blueMissileEntityIds = scenario.forces
+    .flatMap(force => force.entities)
+    .filter(entity => entity.side === 'blue' && /-missile-/.test(entity.id))
+    .map(entity => entity.id);
+  const blueGroups = scenario.interactions?.groups.filter(group => group.side === 'blue') ?? [];
+  const redGroups = scenario.interactions?.groups.filter(group => group.side === 'red') ?? [];
+  const attackEvents = scenario.phases.flatMap(phase => phase.events).filter(event => event.type === 'attack');
+  const detectionEvents = scenario.phases.flatMap(phase => phase.events).filter(event => event.type === 'detection');
+  const recommendationEvent = scenario.phases
+    .flatMap(phase => phase.events)
+    .find(event => event.detail.includes('推荐在山东半岛烟台外缘再部署一部补盲雷达'));
 
-  assert.deepEqual(redRadarEntityIds, ['red-g08-radar-01', 'red-g09-radar-01']);
-  assert.ok(redRadarZones.length > 0);
-  assert.ok(redRadarZones.every(zone => zone.radiusMeters === 1_200_000));
+  assert.deepEqual(redRadarEntityIds, [
+    'red-g01-radar-01',
+    'red-g01-radar-02',
+    'red-g02-radar-01',
+    'red-g02-radar-02',
+    'red-g03-radar-01',
+    'red-g03-radar-02',
+    'red-g04-radar-01',
+    'red-g04-radar-02',
+  ]);
+  assert.equal(redSatellite?.side, 'red');
+  assert.equal(redSatellite?.type, 'space-satellite');
+  assert.equal(redSatellite?.visualModel?.alias, 'wx');
+  assert.deepEqual(redSatellite?.loadout?.sensors, ['optical', 'radar']);
+  assert.ok((redSatellite?.position.altitude ?? 0) >= 700_000);
+  assert.equal(blueMissileEntityIds.length, 30);
+  assert.equal(blueGroups.length, 6);
+  assert.ok(blueGroups.every(group => group.members.length === 5));
+  assert.ok(blueGroups.some(group => group.name.includes('关岛北部')));
+  assert.ok(blueGroups.some(group => group.name.includes('关岛南部')));
+  assert.equal(xml.includes('夏威夷'), false);
+  assert.equal(redGroups.length, 5);
   assert.deepEqual(
     redRadarZones.map(zone => zone.entityId).sort(),
-    ['red-g08-radar-01', 'red-g09-radar-01'],
+    ['red-g01-radar-01', 'red-g03-radar-01'],
   );
   assert.deepEqual(
     redRadarZones.filter(zone => zone.tracking?.enabled).map(zone => zone.entityId).sort(),
-    ['red-g08-radar-01', 'red-g09-radar-01'],
+    ['red-g01-radar-01', 'red-g03-radar-01'],
   );
-  assert.ok(redRadarZones.filter(zone => zone.tracking?.enabled).every(zone => zone.tracking?.maxTracks === 24));
-  assert.deepEqual(redEwZones.map(zone => zone.entityId).sort(), ['red-g08-radar-01', 'red-g09-radar-01']);
-  assert.ok(redEwZones.every(zone => zone.side === 'red' && zone.radiusMeters === 1_200_000));
+  assert.equal(redRadarZones.find(zone => zone.entityId === 'red-g01-radar-01')?.radiusMeters, 1_150_000);
+  assert.equal(redRadarZones.find(zone => zone.entityId === 'red-g03-radar-01')?.radiusMeters, 1_050_000);
+  assert.ok(redRadarZones.every(zone => zone.tracking?.maxTracks === 2));
+  assert.equal(satelliteZone?.tracking?.enabled, true);
+  assert.equal(satelliteZone?.tracking?.maxTracks, 4);
+  assert.deepEqual(redEwZones.map(zone => zone.entityId), ['red-g01-radar-02']);
+  assert.equal(redEwZones[0]?.radiusMeters, 800_000);
   assert.equal(ewEffects?.areaEnabled, false);
   assert.deepEqual(ewEffects?.trackingTargetTypes, ['enemy-missile']);
   assert.equal(ewEffects?.maxTracks, 1);
-  assert.equal(performance?.maxActiveScans, 24);
-  assert.equal(performance?.maxActivePulses, 2);
-  assert.deepEqual(new Set(trajectoryAltitudes), new Set([616_667, 506_667, 140_000]));
-  assert.deepEqual(routeIds.filter(id => id.startsWith('red-')).sort(), [
-    'red-g01-air-01',
-    'red-g01-air-02',
-    'red-g01-air-03',
-    'red-g02-air-01',
-    'red-g03-air-01',
-  ]);
-  assert.deepEqual(routeIds.filter(id => id.startsWith('blue-')).sort(), [
-    'blue-g01-air-01',
-    'blue-g02-air-01',
-  ]);
+  assert.equal(performance?.maxActiveScans, 8);
+  assert.equal(performance?.maxActivePulses, 1);
+  assert.ok(scenario.strikeTasks.every(task => (task.weaponTrajectory?.points.length ?? 0) >= 4));
+  assert.ok(Math.max(...allTrajectoryAltitudes) >= 8_600_000);
   assert.deepEqual(strikeAttackers.filter(id => id.startsWith('red-')), [
-    'red-g01-air-03',
-    'red-g02-missile-01',
-    'red-g04-missile-01',
-    'red-g05-missile-01',
-    'red-g09-missile-01',
+    'red-g01-radar-01',
+    'red-g01-radar-02',
+    'red-g03-radar-01',
   ]);
   assert.deepEqual(strikeAttackers.filter(id => id.startsWith('blue-')), [
-    'blue-g01-missile2-01',
-    'blue-g02-missile3-01',
+    'blue-g01-missile-01',
+    'blue-g02-missile-01',
+    'blue-g03-missile-01',
+    'blue-g05-missile-01',
   ]);
+  assert.deepEqual(attackEvents.map(event => event.sourceEntityId), [
+    'blue-g01-missile-01',
+    'red-g01-radar-01',
+    'blue-g02-missile-01',
+    'blue-g03-missile-01',
+    'red-g01-radar-02',
+    'blue-g05-missile-01',
+    'red-g03-radar-01',
+  ]);
+  assert.deepEqual(
+    attackEvents
+      .filter(event => event.sourceEntityId.startsWith('red-'))
+      .map(event => event.interceptedEntityId),
+    ['blue-g01-missile-01', 'blue-g02-missile-01', 'blue-g03-missile-01'],
+  );
+  assert.ok(detectionEvents.filter(event => event.sourceEntityId === 'red-g05-satellite-01').length >= 4);
+  assert.ok(detectionEvents.some(event => event.sourceEntityId === 'red-g01-radar-01' && event.targetEntityId === 'blue-g01-missile-01'));
+  assert.ok(detectionEvents.some(event => event.sourceEntityId === 'red-g03-radar-01' && event.targetEntityId === 'blue-g02-missile-01'));
+  assert.equal(attackEvents.filter(event => event.targetEntityId?.includes('intercept')).length, 3);
+  assert.ok(attackEvents.some(event => event.targetEntityId === 'red-diverted-impact-marker' && event.detail.includes('改变落点')));
+  assert.ok(recommendationEvent);
+  assert.equal(recommendations.length, 1);
+  assert.equal(recommendations[0].type, 'radar-deployment');
+  assert.equal(recommendations[0].priority, 'high');
+  assert.equal(recommendations[0].location.name, '山东半岛烟台外缘补盲雷达点');
+  assert.match(new XmlScenarioExporter().export(scenario), /<PostRunRecommendations>/);
 });

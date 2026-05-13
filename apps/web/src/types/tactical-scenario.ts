@@ -97,6 +97,7 @@ export interface EquipmentComponent {
   dynamicParams?: ComponentParam[];
   initialParams?: ComponentParam[];
   initialState?: {
+    status?: string;
     positionType?: 'Geodetic' | 'Keplerian';
     // 地面位置
     longitude?: number;
@@ -323,11 +324,11 @@ export interface VisualEffectsConfig {
   performance?: VisualEffectsPerformanceConfig;
 }
 
-export type VisualModelAlias = 'fj' | 'jt' | 'dd' | 'ld';
+export type VisualModelAlias = 'fj' | 'jt' | 'dd' | 'ld' | 'wx';
 
 export interface VisualModelConfig {
   /**
-   * 模型别名。内置约定：fj=飞机、jt=舰艇、dd=导弹、ld=雷达。
+   * 模型别名。内置约定：fj=飞机、jt=舰艇、dd=导弹、ld=雷达、wx=卫星。
    */
   alias?: VisualModelAlias;
   /**
@@ -341,6 +342,11 @@ export interface VisualModelConfig {
   pitchOffsetDeg?: number;
   rollOffsetDeg?: number;
   heightOffsetMeters?: number;
+  color?: string;
+  colorBlendMode?: 'highlight' | 'replace' | 'mix';
+  colorBlendAmount?: number;
+  silhouetteColor?: string;
+  silhouetteSize?: number;
 }
 
 export type EmitterKind = 'radar' | 'electronic-jamming';
@@ -457,7 +463,7 @@ export interface ScenarioMetadata {
 /**
  * 平台大类
  */
-export type PlatformCategory = 'air' | 'naval' | 'ground' | 'munition' | 'facility';
+export type PlatformCategory = 'air' | 'space' | 'naval' | 'ground' | 'munition' | 'facility';
 
 /**
  * 部署域：实体合法存在的空间域
@@ -466,7 +472,7 @@ export type PlatformCategory = 'air' | 'naval' | 'ground' | 'munition' | 'facili
  *   surface    — 海面（altitude ≈ 0，需在水域）
  *   underwater — 水下（altitude < 0，需在水域）
  */
-export type DeploymentDomain = 'air' | 'ground' | 'surface' | 'underwater';
+export type DeploymentDomain = 'air' | 'space' | 'ground' | 'surface' | 'underwater';
 
 /**
  * 地形要求（初始部署位置的陆海约束）
@@ -508,6 +514,7 @@ export interface PlatformMeta {
  *   uav-strike       察打一体无人机（翼龙-2 等）
  *   uav-recon        侦察无人机
  *   uav-swarm        无人机蜂群
+ *   space-satellite  轨道/高空卫星
  *
  * 海上力量 ─────────────────────────────────────────────
  *   ship-carrier     航空母舰
@@ -547,6 +554,7 @@ export type PlatformType =
   | 'uav-strike'
   | 'uav-recon'
   | 'uav-swarm'
+  | 'space-satellite'
   // 海上力量
   | 'ship-carrier'
   | 'ship-destroyer'
@@ -586,6 +594,7 @@ export const PLATFORM_META: Record<PlatformType, PlatformMeta> = {
   'uav-strike':      { category: 'air',      deployDomains: ['ground'],            terrainRequirement: 'land', mobile: true,  operatingDomain: 'air',     defaultAltitude: 5000  },
   'uav-recon':       { category: 'air',      deployDomains: ['ground'],            terrainRequirement: 'land', mobile: true,  operatingDomain: 'air',     defaultAltitude: 6000  },
   'uav-swarm':       { category: 'air',      deployDomains: ['ground', 'surface'], terrainRequirement: 'any',  mobile: true,  operatingDomain: 'air',     defaultAltitude: 500   },
+  'space-satellite': { category: 'space',    deployDomains: ['space'],             terrainRequirement: 'any',  mobile: false, operatingDomain: 'space',   defaultAltitude: 800000 },
 
   // ── 海上力量 ──────────────────────────────────────────
   'ship-carrier':    { category: 'naval',    deployDomains: ['surface'],           terrainRequirement: 'sea',  mobile: true,  operatingDomain: 'surface',  defaultAltitude: 0    },
@@ -643,6 +652,7 @@ export interface TacticalEvent {
   timestamp: number;          // 阶段内相对时间（秒）
   sourceEntityId: string;
   targetEntityId?: string;
+  interceptedEntityId?: string;
   detail: string;              // 人类可读描述
   weaponTrajectory?: WeaponTrajectoryPlan;
 }
@@ -852,6 +862,24 @@ export interface DetectionZone {
   tracking?: RadarTrackingConfig;
 }
 
+export interface RecommendationLocation {
+  name: string;
+  longitude: number;
+  latitude: number;
+  altitude: number;
+}
+
+export interface RadarDeploymentRecommendation {
+  id: string;
+  type: 'radar-deployment';
+  priority?: 'low' | 'medium' | 'high';
+  location: RecommendationLocation;
+  reason: string;
+  expectedEffect?: string;
+  status?: 'pending' | 'deployed';
+  deployedEntityId?: string;
+}
+
 /**
  * 打击任务
  */
@@ -859,6 +887,7 @@ export interface StrikeTask {
   id: string;
   attackerEntityId: string;
   targetEntityId: string;
+  interceptedEntityId?: string;
   phaseId: string;
   timestamp: number;
   detail: string;
@@ -891,6 +920,9 @@ export interface TacticalScenario {
 
   // 行动阶段
   phases: Phase[];
+
+  // 推演后的建议
+  postRunRecommendations?: RadarDeploymentRecommendation[];
 
   // 元数据
   metadata: {

@@ -53,6 +53,44 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
     return plan;
   }
 
+  function createOrReplacePlan(planId: string, scenario: TacticalScenario, name: string) {
+    const existing = plans.value.find(p => p.id === planId);
+    if (existing) {
+      existing.scenario = scenario;
+      existing.name = name || scenario.summary || existing.name;
+      existing.createdAt = new Date();
+      existing.executionState = {
+        status: 'idle',
+        currentTime: 0,
+        currentPhaseIndex: 0,
+        speed: existing.executionState.speed || 1,
+      };
+      clearScenarioDraft(planId);
+      activePlanId.value = planId;
+      saveToStorage();
+      return existing;
+    }
+
+    const plan: ActionPlan = {
+      id: planId,
+      scenario,
+      createdAt: new Date(),
+      name: name || scenario.summary || '未命名方案',
+      executionState: {
+        status: 'idle',
+        currentTime: 0,
+        currentPhaseIndex: 0,
+        speed: 1,
+      },
+    };
+
+    plans.value.push(plan);
+    activePlanId.value = plan.id;
+    saveToStorage();
+
+    return plan;
+  }
+
   // 激活方案
   function activatePlan(planId: string) {
     const plan = plans.value.find(p => p.id === planId);
@@ -158,6 +196,7 @@ export const useActionPlanStore = defineStore('actionPlan', () => {
     activePlan,
     // 方法
     createPlan,
+    createOrReplacePlan,
     activatePlan,
     deletePlan,
     updatePlanScenario,

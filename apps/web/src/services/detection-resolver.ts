@@ -26,6 +26,7 @@ const DETECTION_RANGE_TABLE: Record<string, Record<string, number>> = {
   'uav-strike':      { radar: 100000, optical: 50000 },
   'uav-recon':       { radar: 150000, optical: 80000, ew: 60000 },
   'uav-swarm':       { radar: 30000,  optical: 20000 },
+  'space-satellite': { radar: 50000000, optical: 50000000, ew: 50000000 },
   // 海上力量
   'ship-carrier':    { radar: 400000, sonar: 100000, ew: 200000 },
   'ship-destroyer':  { radar: 250000, sonar: 60000, ew: 120000 },
@@ -54,6 +55,7 @@ const DETECTION_RANGE_TABLE: Record<string, Record<string, number>> = {
 const AUTO_SENSOR_TYPES = new Set([
   'air-aew', 'air-recon', 'air-jammer',
   'air-fighter', 'air-multirole',
+  'space-satellite',
   'ship-carrier', 'ship-destroyer', 'ship-frigate',
   'ground-sam', 'ground-radar', 'ground-ew',
   'facility-radar',

@@ -95,6 +95,7 @@ export const DEFAULT_EW_MAX_TRACKS = 6;
 const RADAR_CAPABLE_ENTITY_TYPES = new Set([
   'air-aew',
   'air-recon',
+  'space-satellite',
   'air-fighter',
   'air-multirole',
   'air-bomber',
@@ -121,6 +122,7 @@ const AIR_TARGET_ENTITY_TYPES = new Set([
   'air-jammer',
   'air-aew',
   'air-recon',
+  'space-satellite',
   'helo-attack',
   'helo-transport',
   'uav-strike',

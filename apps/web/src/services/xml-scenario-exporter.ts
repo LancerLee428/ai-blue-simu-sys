@@ -18,6 +18,7 @@ import type {
   ScenarioMetadata,
   Route,
   DetectionZone,
+  RadarDeploymentRecommendation,
   StrikeTask,
   Phase,
   VisualEffectsConfig,
@@ -70,6 +71,11 @@ function getVisualModelAttributes(model: VisualModelConfig | undefined): Record<
     ...(model.pitchOffsetDeg !== undefined ? { pitchOffsetDeg: String(model.pitchOffsetDeg) } : {}),
     ...(model.rollOffsetDeg !== undefined ? { rollOffsetDeg: String(model.rollOffsetDeg) } : {}),
     ...(model.heightOffsetMeters !== undefined ? { heightOffsetMeters: String(model.heightOffsetMeters) } : {}),
+    ...(model.color ? { color: model.color } : {}),
+    ...(model.colorBlendMode ? { colorBlendMode: model.colorBlendMode } : {}),
+    ...(model.colorBlendAmount !== undefined ? { colorBlendAmount: String(model.colorBlendAmount) } : {}),
+    ...(model.silhouetteColor ? { silhouetteColor: model.silhouetteColor } : {}),
+    ...(model.silhouetteSize !== undefined ? { silhouetteSize: String(model.silhouetteSize) } : {}),
   };
 }
 
@@ -86,6 +92,11 @@ function getWeaponVisualModelAttributes(model: VisualModelConfig | undefined): R
     ...(model.pitchOffsetDeg !== undefined ? { modelPitchOffsetDeg: String(model.pitchOffsetDeg) } : {}),
     ...(model.rollOffsetDeg !== undefined ? { modelRollOffsetDeg: String(model.rollOffsetDeg) } : {}),
     ...(model.heightOffsetMeters !== undefined ? { modelHeightOffsetMeters: String(model.heightOffsetMeters) } : {}),
+    ...(model.color ? { modelColor: model.color } : {}),
+    ...(model.colorBlendMode ? { modelColorBlendMode: model.colorBlendMode } : {}),
+    ...(model.colorBlendAmount !== undefined ? { modelColorBlendAmount: String(model.colorBlendAmount) } : {}),
+    ...(model.silhouetteColor ? { modelSilhouetteColor: model.silhouetteColor } : {}),
+    ...(model.silhouetteSize !== undefined ? { modelSilhouetteSize: String(model.silhouetteSize) } : {}),
   };
 }
 
@@ -699,6 +710,33 @@ function exportDetectionZones(doc: Document, root: Element, zones: DetectionZone
   root.appendChild(zonesEl);
 }
 
+function exportPostRunRecommendations(doc: Document, root: Element, recommendations: RadarDeploymentRecommendation[]) {
+  const validRecommendations = recommendations.filter(recommendation => recommendation.id && recommendation.location);
+  if (validRecommendations.length === 0) return;
+
+  const recommendationsEl = doc.createElement('PostRunRecommendations');
+  for (const recommendation of validRecommendations) {
+    const recommendationEl = elAttr(doc, 'Recommendation', {
+      id: recommendation.id,
+      type: recommendation.type,
+      ...(recommendation.priority ? { priority: recommendation.priority } : {}),
+      ...(recommendation.status ? { status: recommendation.status } : {}),
+      ...(recommendation.deployedEntityId ? { deployedEntityId: recommendation.deployedEntityId } : {}),
+    });
+    recommendationEl.appendChild(elAttr(doc, 'Location', {
+      name: recommendation.location.name,
+      longitude: String(recommendation.location.longitude),
+      latitude: String(recommendation.location.latitude),
+      altitude: String(recommendation.location.altitude ?? 0),
+    }));
+    if (recommendation.reason) recommendationEl.appendChild(el(doc, 'Reason', recommendation.reason));
+    if (recommendation.expectedEffect) recommendationEl.appendChild(el(doc, 'ExpectedEffect', recommendation.expectedEffect));
+    recommendationsEl.appendChild(recommendationEl);
+  }
+
+  root.appendChild(recommendationsEl);
+}
+
 export function getDetectionZoneTrackingAttributes(zone: DetectionZone): Record<string, string> {
   if (!zone.tracking) return {};
 
@@ -717,6 +755,7 @@ function exportStrikeTasks(doc: Document, root: Element, tasks: StrikeTask[]) {
       id: task.id,
       attackerEntityId: task.attackerEntityId,
       targetEntityId: task.targetEntityId,
+      ...(task.interceptedEntityId ? { interceptedEntityId: task.interceptedEntityId } : {}),
       phaseId: task.phaseId,
       timestamp: String(task.timestamp),
       detail: task.detail
@@ -776,6 +815,9 @@ function exportPhases(doc: Document, root: Element, phases: Phase[]) {
         };
         if (ev.targetEntityId) {
           evAttr.targetEntityId = ev.targetEntityId;
+        }
+        if (ev.interceptedEntityId) {
+          evAttr.interceptedEntityId = ev.interceptedEntityId;
         }
         if ('weaponId' in ev && (ev as any).weaponId) {
           evAttr.weaponId = String((ev as any).weaponId);
@@ -888,6 +930,10 @@ export class XmlScenarioExporter {
     // 11. Phases
     if (scenario.phases?.length) {
       exportPhases(doc, root, scenario.phases);
+    }
+
+    if (scenario.postRunRecommendations?.length) {
+      exportPostRunRecommendations(doc, root, scenario.postRunRecommendations);
     }
 
     const serializer = new XMLSerializer();

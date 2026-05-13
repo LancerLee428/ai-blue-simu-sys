@@ -20,6 +20,7 @@ import type {
   StrikeTask,
   TacticalEvent,
   TacticalScenario,
+  RadarDeploymentRecommendation,
   TaskConfig,
   VisualEffectsConfig,
   WeaponEffectConfig,
@@ -57,7 +58,7 @@ function isPlatformType(value: unknown): value is PlatformType {
 }
 
 function isVisualModelAlias(value: unknown): value is VisualModelAlias {
-  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld' || value === 'wx';
 }
 
 function isFormationRoleMarker(value: unknown): value is FormationRoleMarker {
@@ -83,6 +84,11 @@ function normalizeVisualModelConfig(input: unknown): VisualModelConfig | undefin
   const pitchOffsetDeg = raw.pitchOffsetDeg ?? raw.modelPitchOffsetDeg;
   const rollOffsetDeg = raw.rollOffsetDeg ?? raw.modelRollOffsetDeg;
   const heightOffsetMeters = raw.heightOffsetMeters ?? raw.modelHeightOffsetMeters;
+  const color = raw.color ?? raw.modelColor;
+  const colorBlendMode = raw.colorBlendMode ?? raw.modelColorBlendMode;
+  const colorBlendAmount = raw.colorBlendAmount ?? raw.modelColorBlendAmount;
+  const silhouetteColor = raw.silhouetteColor ?? raw.modelSilhouetteColor;
+  const silhouetteSize = raw.silhouetteSize ?? raw.modelSilhouetteSize;
 
   const model: VisualModelConfig = {
     ...(isVisualModelAlias(alias) ? { alias } : {}),
@@ -94,6 +100,13 @@ function normalizeVisualModelConfig(input: unknown): VisualModelConfig | undefin
     ...(pitchOffsetDeg !== undefined ? { pitchOffsetDeg: Number(pitchOffsetDeg) } : {}),
     ...(rollOffsetDeg !== undefined ? { rollOffsetDeg: Number(rollOffsetDeg) } : {}),
     ...(heightOffsetMeters !== undefined ? { heightOffsetMeters: Number(heightOffsetMeters) } : {}),
+    ...(color ? { color: String(color) } : {}),
+    ...(colorBlendMode === 'highlight' || colorBlendMode === 'replace' || colorBlendMode === 'mix'
+      ? { colorBlendMode }
+      : {}),
+    ...(colorBlendAmount !== undefined ? { colorBlendAmount: Number(colorBlendAmount) } : {}),
+    ...(silhouetteColor ? { silhouetteColor: String(silhouetteColor) } : {}),
+    ...(silhouetteSize !== undefined ? { silhouetteSize: Number(silhouetteSize) } : {}),
   };
 
   return Object.keys(model).length > 0 ? model : undefined;
@@ -652,6 +665,40 @@ function normalizeDetectionZones(scenario: TacticalScenario): DetectionZone[] {
   }).filter((zone): zone is DetectionZone => zone !== null && zone.radiusMeters > 0);
 }
 
+function normalizePostRunRecommendations(scenario: TacticalScenario): RadarDeploymentRecommendation[] {
+  return asArray<LooseRecord>(scenario.postRunRecommendations).map((recommendation, index) => {
+    const location = recommendation.location as LooseRecord | undefined;
+    if (!location) return null;
+
+    const name = String(location.name ?? recommendation.name ?? `推荐部署点${index + 1}`);
+    const longitude = Number(location.longitude ?? recommendation.longitude ?? NaN);
+    const latitude = Number(location.latitude ?? recommendation.latitude ?? NaN);
+    const altitude = Number(location.altitude ?? recommendation.altitude ?? 0);
+    if (!name || !Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+
+    const priority = recommendation.priority === 'low' || recommendation.priority === 'medium' || recommendation.priority === 'high'
+      ? recommendation.priority
+      : undefined;
+    const status = recommendation.status === 'deployed' ? 'deployed' : undefined;
+
+    return {
+      id: String(recommendation.id ?? `recommendation-${index + 1}`),
+      type: 'radar-deployment',
+      ...(priority ? { priority } : {}),
+      location: {
+        name,
+        longitude,
+        latitude,
+        altitude: Number.isFinite(altitude) ? altitude : 0,
+      },
+      reason: String(recommendation.reason ?? ''),
+      ...(recommendation.expectedEffect ? { expectedEffect: String(recommendation.expectedEffect) } : {}),
+      ...(status ? { status } : {}),
+      ...(recommendation.deployedEntityId ? { deployedEntityId: String(recommendation.deployedEntityId) } : {}),
+    };
+  }).filter((recommendation): recommendation is RadarDeploymentRecommendation => recommendation !== null);
+}
+
 function normalizePhases(scenario: TacticalScenario): Phase[] {
   return asArray<LooseRecord>(scenario.phases).map((phase, index) => {
     const events = asArray<LooseRecord>(phase.events).map(event => ({
@@ -659,6 +706,7 @@ function normalizePhases(scenario: TacticalScenario): Phase[] {
       timestamp: Number(event.timestamp ?? 0),
       sourceEntityId: String(event.sourceEntityId ?? ''),
       ...(event.targetEntityId ? { targetEntityId: String(event.targetEntityId) } : {}),
+      ...(event.interceptedEntityId ? { interceptedEntityId: String(event.interceptedEntityId) } : {}),
       ...(event.weaponId ? { weaponId: String(event.weaponId) } : {}),
       ...(event.weaponType ? { weaponType: String(event.weaponType) } : {}),
       ...(event.weaponTrajectory ? { weaponTrajectory: normalizeWeaponTrajectoryPlan(event.weaponTrajectory) } : {}),
@@ -694,6 +742,7 @@ function inferStrikeTasksFromRoutes(scenario: TacticalScenario): StrikeTask[] {
     id: String(task.id ?? ''),
     attackerEntityId: String(task.attackerEntityId ?? ''),
     targetEntityId: String(task.targetEntityId ?? ''),
+    ...(task.interceptedEntityId ? { interceptedEntityId: String(task.interceptedEntityId) } : {}),
     phaseId: String(task.phaseId ?? ''),
     timestamp: Number(task.timestamp ?? 0),
     detail: String(task.detail ?? ''),
@@ -782,6 +831,7 @@ function addAttackEventsFromStrikeTasks(scenario: TacticalScenario): void {
       timestamp: task.timestamp,
       sourceEntityId: task.attackerEntityId,
       targetEntityId: task.targetEntityId,
+      ...(task.interceptedEntityId ? { interceptedEntityId: task.interceptedEntityId } : {}),
       detail: task.detail,
       ...(task.weaponTrajectory ? { weaponTrajectory: task.weaponTrajectory } : {}),
     });
@@ -844,6 +894,7 @@ export function normalizeTacticalScenario(input: TacticalScenario): TacticalScen
   scenario.routes = normalizeRoutes(scenario);
   scenario.detectionZones = normalizeDetectionZones(scenario);
   scenario.phases = normalizePhases(scenario);
+  scenario.postRunRecommendations = normalizePostRunRecommendations(scenario);
 
   if (scenario.phases.length === 0 && scenario.routes.length > 0) {
     const duration = Math.max(

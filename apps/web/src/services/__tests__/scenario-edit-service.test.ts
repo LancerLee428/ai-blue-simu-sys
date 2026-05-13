@@ -4,6 +4,7 @@ import { js2xml, type Element as XmlElement } from 'xml-js';
 
 import { XmlScenarioExporter } from '../xml-scenario-exporter';
 import {
+  deployRadarRecommendationWithLinkedGeometry,
   moveScenarioEntityWithLinkedGeometry,
   updateScenarioRoutePointWithLinkedGeometry,
   updateScenarioEntityWithLinkedGeometry,
@@ -167,6 +168,21 @@ function createScenario(): TacticalScenario {
       modelUsed: 'test',
       confidence: 1,
     },
+    postRunRecommendations: [
+      {
+        id: 'recommend-yantai-radar',
+        type: 'radar-deployment',
+        priority: 'high',
+        location: {
+          name: '山东半岛烟台外缘补盲雷达点',
+          longitude: 121.39,
+          latitude: 37.52,
+          altitude: 80,
+        },
+        reason: '上次推演发现东海北部至山东半岛方向缺少导弹侦测信息。',
+        expectedEffect: '补齐末段前导弹侦测链路。',
+      },
+    ],
   };
 }
 
@@ -304,4 +320,37 @@ test('updateScenarioRoutePointWithLinkedGeometry should sync missile launch poin
 
   assert.equal(updated.linkedLaunchPointsChanged, 1);
   assert.deepEqual(trajectory[0].position, { longitude: 122.35, latitude: 25.7, altitude: 11100 });
+});
+
+test('deployRadarRecommendationWithLinkedGeometry should add radar entity zone group and mark recommendation deployed', () => {
+  const scenario = createScenario();
+  const recommendation = scenario.postRunRecommendations?.[0];
+  assert.ok(recommendation);
+
+  const result = deployRadarRecommendationWithLinkedGeometry(scenario, recommendation);
+  const redForce = result.scenario.forces.find(force => force.side === 'red');
+  const deployed = redForce?.entities.find(entity => entity.id === result.deployedEntityId);
+  const zone = result.scenario.detectionZones.find(item => item.entityId === result.deployedEntityId);
+  const group = result.scenario.interactions?.groups.find(item => item.id === `${result.deployedEntityId}-group`);
+  const deployedRecommendation = result.scenario.postRunRecommendations?.find(item => item.id === recommendation.id);
+
+  assert.equal(result.deployedEntityId, 'radar-deployment-recommend-yantai-radar');
+  assert.equal(deployed?.side, 'red');
+  assert.equal(deployed?.type, 'ground-radar');
+  assert.equal(deployed?.name, '山东半岛烟台外缘补盲雷达');
+  assert.equal(deployed?.visualModel?.color, '#31f5ff');
+  assert.equal(deployed?.visualModel?.colorBlendMode, 'mix');
+  assert.equal(deployed?.visualModel?.silhouetteSize, 2);
+  assert.deepEqual(deployed?.position, {
+    longitude: recommendation.location.longitude,
+    latitude: recommendation.location.latitude,
+    altitude: recommendation.location.altitude,
+  });
+  assert.equal(zone?.side, 'red');
+  assert.equal(zone?.tracking?.enabled, true);
+  assert.equal(zone?.tracking?.maxTracks, 2);
+  assert.equal(group?.members[0]?.equipRef, result.deployedEntityId);
+  assert.equal(deployedRecommendation?.status, 'deployed');
+  assert.equal(deployedRecommendation?.deployedEntityId, result.deployedEntityId);
+  assert.equal(scenario.forces[0].entities.some(entity => entity.id === result.deployedEntityId), false);
 });

@@ -30,6 +30,7 @@ import type {
   KeplerianOrbit,
   Route,
   DetectionZone,
+  RadarDeploymentRecommendation,
   StrikeTask,
   Phase,
   TacticalEvent,
@@ -81,7 +82,7 @@ function parseOptionalAttrFloat(el: Element | null | undefined, attr: string): n
 }
 
 function isVisualModelAlias(value: string | null | undefined): value is VisualModelAlias {
-  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld';
+  return value === 'fj' || value === 'jt' || value === 'dd' || value === 'ld' || value === 'wx';
 }
 
 function isFormationRoleMarker(value: string | null | undefined): value is FormationRoleMarker {
@@ -114,6 +115,13 @@ function parseVisualModelConfig(el: Element | null | undefined): VisualModelConf
     ?? parseOptionalAttrFloat(el, 'modelRollOffsetDeg');
   const heightOffsetMeters = parseOptionalAttrFloat(el, 'heightOffsetMeters')
     ?? parseOptionalAttrFloat(el, 'modelHeightOffsetMeters');
+  const color = getAttrText(el, 'color') || getAttrText(el, 'modelColor');
+  const colorBlendMode = getAttrText(el, 'colorBlendMode') || getAttrText(el, 'modelColorBlendMode');
+  const colorBlendAmount = parseOptionalAttrFloat(el, 'colorBlendAmount')
+    ?? parseOptionalAttrFloat(el, 'modelColorBlendAmount');
+  const silhouetteColor = getAttrText(el, 'silhouetteColor') || getAttrText(el, 'modelSilhouetteColor');
+  const silhouetteSize = parseOptionalAttrFloat(el, 'silhouetteSize')
+    ?? parseOptionalAttrFloat(el, 'modelSilhouetteSize');
 
   if (
     !alias
@@ -125,6 +133,11 @@ function parseVisualModelConfig(el: Element | null | undefined): VisualModelConf
     && pitchOffsetDeg === undefined
     && rollOffsetDeg === undefined
     && heightOffsetMeters === undefined
+    && !color
+    && !colorBlendMode
+    && colorBlendAmount === undefined
+    && !silhouetteColor
+    && silhouetteSize === undefined
   ) {
     return undefined;
   }
@@ -139,6 +152,13 @@ function parseVisualModelConfig(el: Element | null | undefined): VisualModelConf
     ...(pitchOffsetDeg !== undefined ? { pitchOffsetDeg } : {}),
     ...(rollOffsetDeg !== undefined ? { rollOffsetDeg } : {}),
     ...(heightOffsetMeters !== undefined ? { heightOffsetMeters } : {}),
+    ...(color ? { color } : {}),
+    ...(colorBlendMode === 'highlight' || colorBlendMode === 'replace' || colorBlendMode === 'mix'
+      ? { colorBlendMode }
+      : {}),
+    ...(colorBlendAmount !== undefined ? { colorBlendAmount } : {}),
+    ...(silhouetteColor ? { silhouetteColor } : {}),
+    ...(silhouetteSize !== undefined ? { silhouetteSize } : {}),
   };
 }
 
@@ -293,9 +313,11 @@ function inferPlatformType(equipmentName: string, components: EquipmentComponent
   if (/(预警机|aew|e-2c)/i.test(haystack)) return 'air-aew';
   if (/(无人机|uav|攻击-11)/i.test(haystack)) return 'uav-strike';
   if (/(战斗机|fighter|歼-16|f-15)/i.test(haystack)) return 'air-fighter';
+  if (/(飞机|air_mover|航空机动)/i.test(haystack)) return 'air-fighter';
   if (/(坦克|tank|99a)/i.test(haystack)) return 'ground-tank';
   if (/(自行火炮|spg|plz)/i.test(haystack)) return 'ground-spg';
   if (/(防空|sam|爱国者|hq-9|红旗)/i.test(haystack)) return 'ground-sam';
+  if (/(卫星|satellite|space-satellite|space_mover)/i.test(haystack)) return 'space-satellite';
   if (/(雷达|radar|tpy)/i.test(haystack)) return 'ground-radar';
   if (/(sat|recon|dut)/i.test(haystack)) return 'uav-recon';
   if (/(ground|station)/i.test(haystack)) return 'facility-radar';
@@ -925,6 +947,53 @@ function parseDetectionZoneTracking(zoneEl: Element): RadarTrackingConfig | unde
   });
 }
 
+function isRecommendationPriority(value: string | null | undefined): value is 'low' | 'medium' | 'high' {
+  return value === 'low' || value === 'medium' || value === 'high';
+}
+
+function isRecommendationStatus(value: string | null | undefined): value is 'pending' | 'deployed' {
+  return value === 'pending' || value === 'deployed';
+}
+
+function parsePostRunRecommendations(doc: Document): RadarDeploymentRecommendation[] {
+  const recommendationsEl = doc.querySelector('PostRunRecommendations');
+  if (!recommendationsEl) return [];
+
+  const recommendations: RadarDeploymentRecommendation[] = [];
+  Array.from(recommendationsEl.querySelectorAll(':scope > Recommendation')).forEach((recommendationEl, index) => {
+    const locationEl = recommendationEl.querySelector(':scope > Location');
+    const name = getAttrText(locationEl, 'name') || getText(recommendationEl, 'LocationName');
+    const longitude = parseOptionalAttrFloat(locationEl, 'longitude');
+    const latitude = parseOptionalAttrFloat(locationEl, 'latitude');
+    const altitude = parseOptionalAttrFloat(locationEl, 'altitude') ?? 0;
+
+    if (!name || longitude === undefined || latitude === undefined) return;
+
+    const priority = getAttrText(recommendationEl, 'priority');
+    const status = getAttrText(recommendationEl, 'status');
+    const deployedEntityId = getAttrText(recommendationEl, 'deployedEntityId');
+
+    const recommendation: RadarDeploymentRecommendation = {
+      id: getAttrText(recommendationEl, 'id') || `recommendation-${index + 1}`,
+      type: 'radar-deployment',
+      ...(isRecommendationPriority(priority) ? { priority } : {}),
+      location: {
+        name,
+        longitude,
+        latitude,
+        altitude,
+      },
+      reason: getText(recommendationEl, 'Reason') || '',
+      ...(getText(recommendationEl, 'ExpectedEffect') ? { expectedEffect: getText(recommendationEl, 'ExpectedEffect') } : {}),
+      ...(isRecommendationStatus(status) ? { status } : {}),
+      ...(deployedEntityId ? { deployedEntityId } : {}),
+    };
+    recommendations.push(recommendation);
+  });
+
+  return recommendations;
+}
+
 function parseStrikeTasks(doc: Document, forces: TacticalScenario['forces']): StrikeTask[] {
   const tasksEl = doc.querySelector('StrikeTasks');
   if (!tasksEl) return [];
@@ -940,6 +1009,7 @@ function parseStrikeTasks(doc: Document, forces: TacticalScenario['forces']): St
         id: getAttrText(taskEl, 'id') || `strike-${attackerEntityId}-${targetEntityId}`,
         attackerEntityId,
         targetEntityId,
+        ...(getAttrText(taskEl, 'interceptedEntityId') ? { interceptedEntityId: getAttrText(taskEl, 'interceptedEntityId') } : {}),
         phaseId: getAttrText(taskEl, 'phaseId') || getText(taskEl, 'PhaseId'),
         timestamp: getAttrFloat(taskEl, 'timestamp') || getFloat(taskEl, 'Timestamp'),
         detail: getAttrText(taskEl, 'detail') || getText(taskEl, 'Detail') || '打击任务',
@@ -998,6 +1068,7 @@ function parsePhases(doc: Document, forces: TacticalScenario['forces']): Phase[]
           if (!sourceEntityId || !findEntity(forces, sourceEntityId)) return null;
 
           const targetEntityId = getAttrText(eventEl, 'targetEntityId') || undefined;
+          const interceptedEntityId = getAttrText(eventEl, 'interceptedEntityId') || undefined;
           const weaponId = getAttrText(eventEl, 'weaponId') || undefined;
           const weaponType = getAttrText(eventEl, 'weaponType') || undefined;
           return {
@@ -1005,6 +1076,7 @@ function parsePhases(doc: Document, forces: TacticalScenario['forces']): Phase[]
             timestamp: getAttrFloat(eventEl, 'timestamp'),
             sourceEntityId,
             ...(targetEntityId ? { targetEntityId } : {}),
+            ...(interceptedEntityId ? { interceptedEntityId } : {}),
             ...(weaponId ? { weaponId } : {}),
             ...(weaponType ? { weaponType } : {}),
             detail: getAttrText(eventEl, 'detail') || getText(eventEl, 'Detail') || '',
@@ -1219,6 +1291,7 @@ export class XmlScenarioParser {
     const explicitDetectionZones = parseDetectionZones(doc, forces);
     const strikeTasks = parseStrikeTasks(doc, forces);
     const phases = parsePhases(doc, forces);
+    const postRunRecommendations = parsePostRunRecommendations(doc);
     recoverEntityPositionsFromTacticalLayers(forces, routes, explicitDetectionZones, phases);
     const detectionZones = explicitDetectionZones.length > 0
       ? explicitDetectionZones
@@ -1237,6 +1310,7 @@ export class XmlScenarioParser {
       detectionZones,
       strikeTasks,
       phases,
+      postRunRecommendations,
       metadata: {
         generatedAt: new Date().toISOString(),
         modelUsed: 'xml-import',

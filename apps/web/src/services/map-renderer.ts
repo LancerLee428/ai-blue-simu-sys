@@ -40,6 +40,7 @@ import {
 } from './runtime-visual-math';
 import { buildRuntimeWeaponTrail } from './runtime-weapon-trail';
 import { resolveVisualModel, resolveWeaponVisualModel, type ResolvedVisualModel } from './visual-models';
+import type { RuntimeCameraConfig } from './simulation-runtime-config';
 
 const SIDE_VISUALS: Record<ForceSide, {
   label: Cesium.Color;
@@ -54,6 +55,24 @@ const SIDE_VISUALS: Record<ForceSide, {
     labelOutline: Cesium.Color.fromCssColorString('#05162e'),
   },
 };
+
+function resolveModelColorBlendMode(mode: ResolvedVisualModel['colorBlendMode']): Cesium.ColorBlendMode | undefined {
+  if (mode === 'highlight') return Cesium.ColorBlendMode.HIGHLIGHT;
+  if (mode === 'replace') return Cesium.ColorBlendMode.REPLACE;
+  if (mode === 'mix') return Cesium.ColorBlendMode.MIX;
+  return undefined;
+}
+
+function getCesiumModelVisualOptions(model: ResolvedVisualModel): Record<string, unknown> {
+  const colorBlendMode = resolveModelColorBlendMode(model.colorBlendMode);
+  return {
+    ...(model.color ? { color: Cesium.Color.fromCssColorString(model.color) } : {}),
+    ...(colorBlendMode !== undefined ? { colorBlendMode } : {}),
+    ...(model.colorBlendAmount !== undefined ? { colorBlendAmount: model.colorBlendAmount } : {}),
+    ...(model.silhouetteColor ? { silhouetteColor: Cesium.Color.fromCssColorString(model.silhouetteColor) } : {}),
+    ...(model.silhouetteSize !== undefined ? { silhouetteSize: model.silhouetteSize } : {}),
+  };
+}
 
 export interface RuntimeVisualDebugOptions {
   staticDetectionVisible: boolean | null;
@@ -354,6 +373,7 @@ export class MapRenderer {
               scale: modelConfig.scale,
               minimumPixelSize: modelConfig.minimumPixelSize,
               ...(modelConfig.maximumScale !== undefined ? { maximumScale: modelConfig.maximumScale } : {}),
+              ...getCesiumModelVisualOptions(modelConfig),
               heightReference: heightRef,
             },
             label: this.createEntityLabel(entity, force.side, 42, heightRef),
@@ -592,6 +612,7 @@ export class MapRenderer {
                 scale: weaponModel.scale,
                 minimumPixelSize: weaponModel.minimumPixelSize,
                 ...(weaponModel.maximumScale !== undefined ? { maximumScale: weaponModel.maximumScale } : {}),
+                ...getCesiumModelVisualOptions(weaponModel),
                 heightReference: Cesium.HeightReference.NONE,
               },
             })
@@ -1344,7 +1365,11 @@ export class MapRenderer {
   /**
    * 聚焦到战术区域（全局视角）
    */
-  flyToScenario(scenario: TacticalScenario): void {
+  flyToScenario(scenario: TacticalScenario, cameraConfig?: RuntimeCameraConfig): Promise<void> {
+    if (cameraConfig?.enabled) {
+      return this.flyToCameraConfig(cameraConfig);
+    }
+
     // 收集所有实体坐标
     const allPositions: Cesium.Cartesian3[] = [];
     scenario.forces.forEach((force) => {
@@ -1359,7 +1384,7 @@ export class MapRenderer {
       });
     });
 
-    if (allPositions.length === 0) return;
+    if (allPositions.length === 0) return Promise.resolve();
 
     // 计算所有实体的边界框
     let minLon = Infinity, maxLon = -Infinity;
@@ -1388,14 +1413,35 @@ export class MapRenderer {
     );
     const range = Math.min(Math.max(neededRange * 1.8, 500000), 2_500_000); // 1.8x 余量，上限 2500km
 
-    this.viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, range),
-      orientation: {
-        heading: Cesium.Math.toRadians(0),
-        pitch: Cesium.Math.toRadians(-45),
-        roll: 0,
-      },
-      duration: 2.5,
+    return this.flyToCameraConfig({
+      enabled: true,
+      longitude: centerLon,
+      latitude: centerLat,
+      altitude: range,
+      headingDeg: 0,
+      pitchDeg: -45,
+      rollDeg: 0,
+      durationSeconds: 2.5,
+    });
+  }
+
+  flyToCameraConfig(cameraConfig: RuntimeCameraConfig): Promise<void> {
+    return new Promise((resolve) => {
+      this.viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(
+          cameraConfig.longitude,
+          cameraConfig.latitude,
+          cameraConfig.altitude,
+        ),
+        orientation: {
+          heading: Cesium.Math.toRadians(cameraConfig.headingDeg),
+          pitch: Cesium.Math.toRadians(cameraConfig.pitchDeg),
+          roll: Cesium.Math.toRadians(cameraConfig.rollDeg),
+        },
+        duration: cameraConfig.durationSeconds,
+        complete: resolve,
+        cancel: resolve,
+      });
     });
   }
 }

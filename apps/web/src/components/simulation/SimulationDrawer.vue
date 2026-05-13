@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { ActionPlan } from "../../stores/action-plan";
-import type { Phase, TacticalEvent } from "../../types/tactical-scenario";
+import type { Phase, TacticalEvent, RadarDeploymentRecommendation } from "../../types/tactical-scenario";
 
 const props = defineProps<{
   open: boolean;
@@ -27,6 +27,7 @@ const emit = defineEmits<{
   toggleRuntimeRadarScan: [visible: boolean];
   toggleRuntimeJamming: [visible: boolean];
   toggleRuntimeExplosion: [visible: boolean];
+  deployRecommendation: [recommendationId: string];
 }>();
 
 const speedOptions = [0.5, 1, 2, 5, 10];
@@ -45,6 +46,11 @@ const currentPhaseElapsed = computed(
 );
 const executionStatus = computed(
   () => props.plan?.executionState.status ?? "idle",
+);
+const radarRecommendations = computed(() =>
+  (props.plan?.scenario.postRunRecommendations ?? []).filter(
+    (recommendation): recommendation is RadarDeploymentRecommendation => recommendation.type === "radar-deployment" && recommendation.status !== "deployed",
+  ),
 );
 const currentTotalTime = computed(() => {
   return phaseStartSeconds(currentPhaseIndex.value) + currentPhaseElapsed.value;
@@ -159,6 +165,10 @@ function handlePlayToggle() {
   } else {
     emit("play");
   }
+}
+
+function formatCoordinate(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(4) : "0.0000";
 }
 </script>
 
@@ -308,65 +318,102 @@ function handlePlayToggle() {
       </div>
 
       <div class="gantt-wrap">
-        <div v-if="plan && phases.length > 0" class="gantt-board">
-          <div class="time-axis">
-            <span>0s</span>
-            <span>{{ Math.round(totalDuration / 2) }}s</span>
-            <span>{{ totalDuration }}s</span>
+        <template v-if="plan && phases.length > 0">
+          <div class="gantt-board">
+            <div class="time-axis">
+              <span>0s</span>
+              <span>{{ Math.round(totalDuration / 2) }}s</span>
+              <span>{{ totalDuration }}s</span>
+            </div>
+
+            <div class="timeline-lane">
+              <div
+                v-for="row in timelineRows"
+                :key="row.phase.id"
+                class="phase-bar"
+                :class="[
+                  row.state,
+                  {
+                    active: row.index === currentPhaseIndex,
+                    'is-running':
+                      row.state === 'phase-active' &&
+                      plan.executionState.status === 'running',
+                  },
+                ]"
+                :style="{
+                  left: `${row.left}%`,
+                  width: `${row.width}%`,
+                  '--phase-progress': `${row.progress}%`,
+                }"
+              >
+                <span>{{ row.phase.name }}</span>
+                <em>{{ row.phase.duration }}s</em>
+              </div>
+              <div
+                class="playhead"
+                :style="{ left: `${playheadPercent}%` }"
+              ></div>
+            </div>
+
+            <div class="event-lane">
+              <div
+                v-for="row in timelineRows"
+                :key="`${row.phase.id}-events`"
+                class="event-row"
+              >
+                <span class="row-label">阶段{{ row.index + 1 }}</span>
+                <div class="row-line">
+                  <button
+                    v-for="item in row.events"
+                    :key="`${row.phase.id}-${item.event.timestamp}-${item.event.detail}`"
+                    type="button"
+                    class="event-dot"
+                    :class="`event-${item.event.type}`"
+                    :style="{ left: `${item.left}%` }"
+                    :title="`${formatTime(row.start + item.event.timestamp)} ${getEventLabel(item.event)}：${item.event.detail}`"
+                  >
+                    {{ getEventLabel(item.event).slice(0, 1) }}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div class="timeline-lane">
-            <div
-              v-for="row in timelineRows"
-              :key="row.phase.id"
-              class="phase-bar"
-              :class="[
-                row.state,
-                {
-                  active: row.index === currentPhaseIndex,
-                  'is-running':
-                    row.state === 'phase-active' &&
-                    plan.executionState.status === 'running',
-                },
-              ]"
-              :style="{
-                left: `${row.left}%`,
-                width: `${row.width}%`,
-                '--phase-progress': `${row.progress}%`,
-              }"
-            >
-              <span>{{ row.phase.name }}</span>
-              <em>{{ row.phase.duration }}s</em>
+          <div v-if="radarRecommendations.length > 0 && executionStatus === 'completed'" class="recommendations-wrap">
+            <div class="recommendations-header">
+              <span>推演后建议</span>
+              <strong>{{ radarRecommendations.length }}</strong>
             </div>
             <div
-              class="playhead"
-              :style="{ left: `${playheadPercent}%` }"
-            ></div>
-          </div>
-
-          <div class="event-lane">
-            <div
-              v-for="row in timelineRows"
-              :key="`${row.phase.id}-events`"
-              class="event-row"
+              v-for="recommendation in radarRecommendations"
+              :key="recommendation.id"
+              class="recommendation-card"
             >
-              <span class="row-label">阶段{{ row.index + 1 }}</span>
-              <div class="row-line">
+              <div class="recommendation-title">
+                <span>{{ recommendation.location.name }}</span>
+                <strong>
+                  {{ recommendation.priority === 'high' ? '高优先级' : recommendation.priority === 'medium' ? '中优先级' : '低优先级' }}
+                </strong>
+              </div>
+              <div class="recommendation-position">
+                <span>{{ formatCoordinate(recommendation.location.longitude) }}</span>
+                <span>{{ formatCoordinate(recommendation.location.latitude) }}</span>
+                <span>{{ Math.round(recommendation.location.altitude) }}m</span>
+              </div>
+              <p class="recommendation-reason">{{ recommendation.reason }}</p>
+              <p v-if="recommendation.expectedEffect" class="recommendation-effect">{{ recommendation.expectedEffect }}</p>
+              <div class="recommendation-actions">
                 <button
-                  v-for="item in row.events"
-                  :key="`${row.phase.id}-${item.event.timestamp}-${item.event.detail}`"
                   type="button"
-                  class="event-dot"
-                  :class="`event-${item.event.type}`"
-                  :style="{ left: `${item.left}%` }"
-                  :title="`${formatTime(row.start + item.event.timestamp)} ${getEventLabel(item.event)}：${item.event.detail}`"
+                  class="deploy-button"
+                  @click="emit('deployRecommendation', recommendation.id)"
                 >
-                  {{ getEventLabel(item.event).slice(0, 1) }}
+                  部署雷达
                 </button>
               </div>
             </div>
           </div>
-        </div>
+        </template>
 
         <div v-else class="empty-state">暂无可推演的行动计划</div>
       </div>
@@ -582,6 +629,91 @@ function handlePlayToggle() {
   min-height: 0;
   padding: 10px 16px 12px;
   overflow: auto;
+}
+
+.recommendations-wrap {
+  border-top: 1px solid rgba(107, 196, 255, 0.12);
+  padding: 10px 16px 14px;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.recommendations-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: #8ea4c9;
+  font-size: 12px;
+}
+
+.recommendation-card {
+  border: 1px solid rgba(0, 214, 201, 0.2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(0, 214, 201, 0.05);
+}
+
+.recommendation-card + .recommendation-card {
+  margin-top: 8px;
+}
+
+.recommendation-title,
+.recommendation-position,
+.recommendation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.recommendation-title {
+  margin-bottom: 4px;
+  color: #d8e8ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.recommendation-title strong {
+  color: #00d6c9;
+  font-size: 12px;
+}
+
+.recommendation-position {
+  color: #8ea4c9;
+  font-size: 12px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.recommendation-reason,
+.recommendation-effect {
+  margin: 6px 0 0;
+  color: #d8e8ff;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.recommendation-effect {
+  color: #00d6c9;
+}
+
+.recommendation-actions {
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.deploy-button {
+  min-width: 118px;
+  height: 28px;
+  border: 1px solid rgba(0, 214, 201, 0.45);
+  border-radius: 6px;
+  color: #00d6c9;
+  background: rgba(0, 214, 201, 0.12);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.deploy-button:hover {
+  background: rgba(0, 214, 201, 0.2);
 }
 
 .gantt-wrap::-webkit-scrollbar {

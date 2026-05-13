@@ -71,6 +71,7 @@ function toImpactEvent(
     detail: interference
       ? `${weaponSpec.name} 受 ${interference.jammerId} 干扰，落点偏移 ${Math.round(interference.lateralOffsetMeters)}m`
       : `${weaponSpec.name} 命中 ${attackEvent.targetEntityId ?? '目标'}`,
+    ...(attackEvent.interceptedEntityId ? { interceptedEntityId: attackEvent.interceptedEntityId } : {}),
     ...(interference ? { interference } : {}),
   };
 }
